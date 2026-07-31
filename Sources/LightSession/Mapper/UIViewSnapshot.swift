@@ -1,4 +1,11 @@
 #if canImport(UIKit)
+// Two builds reach the same Objective-C function two different ways. SwiftPM needs one target per
+// language, so there it is a module of its own and has to be imported. CocoaPods builds one
+// mixed-language module instead, and there the header arrives through the pod's umbrella — the
+// module does not exist, and importing it would fail to compile.
+#if canImport(LightSessionSafe)
+import LightSessionSafe
+#endif
 import UIKit
 import WebKit
 
@@ -25,18 +32,51 @@ extension UIView {
             alpha: Double(alpha),
             color: lightSessionBackgroundColor,
             clipsToBounds: clipsToBounds,
+            declaresOpaque: isOpaque,
             children: subviews.map { $0.lightSessionSnapshot(in: window) }
         )
     }
 
-    private func lightSessionFrame(in window: UIWindow) -> Rect {
-        let converted = convert(bounds, to: window)
-        return Rect(
-            left: converted.minX,
-            top: converted.minY,
-            right: converted.maxX,
-            bottom: converted.maxY
+    /// This view's rectangle in the window, as it is **on screen right now**.
+    ///
+    /// Presented geometry, not model geometry, and that distinction is why this is not one line.
+    /// `view.convert(bounds, to: window)` answers where the view *will be* once any running animation ends. The
+    /// pixels a capture contains are the presented state — mid-slide. Reading one while drawing the other is what
+    /// put mask rectangles beside the words they were meant to cover: a stored frame of a push showed two screens
+    /// side by side with grey blocks next to the text instead of over it.
+    ///
+    /// The arithmetic is `CALayer`'s own, and each line earns its place:
+    ///
+    ///  * The **position** is converted through the *presented* parent with `to: nil`, which means "the root of
+    ///    the layer tree". An earlier attempt converted into `window.layer.presentation()` instead and silently did
+    ///    nothing, because a window is not what animates — the container inside it is — so that call returned nil
+    ///    and every frame fell back to the model. `to: nil` needs no target layer at all.
+    ///  * A layer with **no presentation layer is not animating**, so its model values *are* its presented ones.
+    ///    That is what makes it safe to take presented-if-available link by link rather than needing the whole
+    ///    ancestry to be animating at once.
+    ///  * `position` is where the **anchor point** sits, not the origin, so the anchor is subtracted. Skipping that
+    ///    offsets every view by half its size on the default anchor of (0.5, 0.5).
+    ///  * `layer.transform` is folded in, so a modal presentation — which scales the screen behind it — is measured
+    ///    where it is drawn rather than where it would be at rest.
+    func lightSessionFrame(in window: UIWindow) -> Rect {
+        let presented = LightSessionPresentationLayer(layer) ?? layer
+        let size = presented.bounds.size
+        let parent = layer.superlayer.map { LightSessionPresentationLayer($0) ?? $0 }
+        let position = parent?.convert(presented.position, to: nil) ?? presented.position
+
+        var transform = CGAffineTransform.identity
+        transform.tx = position.x
+        transform.ty = position.y
+        transform = CATransform3DGetAffineTransform(presented.transform).concatenating(transform)
+        transform = transform.translatedBy(
+            x: -size.width * presented.anchorPoint.x,
+            y: -size.height * presented.anchorPoint.y
         )
+
+        // The bounding box of the transformed rectangle. `Rect` is axis-aligned and so is the wire format, so a
+        // rotated view is described by the box around it — larger than the view, which for a mask errs safe.
+        let rect = CGRect(origin: .zero, size: size).applying(transform)
+        return Rect(left: rect.minX, top: rect.minY, right: rect.maxX, bottom: rect.maxY)
     }
 
     /// What this view is, for the purposes of a wireframe.

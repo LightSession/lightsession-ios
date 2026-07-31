@@ -20,6 +20,12 @@ public struct ViewSnapshot: Equatable, Sendable {
     public var color: Color?
     /// Whether this view clips what its children draw. Decides whether children are trimmed to it.
     public var clipsToBounds: Bool
+    /// What UIKit's own `isOpaque` says, before the background colour is consulted.
+    ///
+    /// Kept separate from `color` because the two answer different questions: `color` is what to draw, and this is
+    /// whether anything behind the view can show through. `CoveredContent` needs both, and a view that draws a
+    /// background while declaring itself non-opaque is one whose backdrop may still be visible.
+    public var declaresOpaque: Bool
     public var children: [ViewSnapshot]
 
     public init(
@@ -29,6 +35,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         alpha: Double = 1,
         color: Color? = nil,
         clipsToBounds: Bool = false,
+        declaresOpaque: Bool = false,
         children: [ViewSnapshot] = []
     ) {
         self.frame = frame
@@ -37,6 +44,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         self.alpha = alpha
         self.color = color
         self.clipsToBounds = clipsToBounds
+        self.declaresOpaque = declaresOpaque
         self.children = children
     }
 }

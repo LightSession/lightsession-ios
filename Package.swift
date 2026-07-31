@@ -24,7 +24,13 @@ let package = Package(
         .library(name: "LightSession", targets: ["LightSession"]),
     ],
     targets: [
-        .target(name: "LightSession"),
+        // One C function, and the only Objective-C in the package.
+        //
+        // It wraps `-[CALayer presentation]` in `@try/@catch`, because that call can raise and Swift cannot catch
+        // an Objective-C exception. Reading presented geometry is what lets a replay show a transition with its
+        // masks in the right place; doing it unguarded would mean a rare crash in somebody's app.
+        .target(name: "LightSessionSafe"),
+        .target(name: "LightSession", dependencies: ["LightSessionSafe"]),
         .testTarget(name: "LightSessionTests", dependencies: ["LightSession"]),
     ]
 )

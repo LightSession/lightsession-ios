@@ -19,7 +19,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 apiURL: "http://127.0.0.1:3002",
                 // A different service from the API: interaction batches go to the ingest, and pointing one
                 // at the other 404s everything it carries.
-                ingestURL: "http://127.0.0.1:5055"
+                ingestURL: "http://127.0.0.1:5055",
+                // 300 ms instead of the default second: a smoother replay, and the frame budget it costs
+                // is the point of measuring it rather than guessing.
+                captureIntervalMillis: 300
             ),
             verbose: true
         )

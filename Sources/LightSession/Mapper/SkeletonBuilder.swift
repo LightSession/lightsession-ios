@@ -41,9 +41,15 @@ public enum SkeletonBuilder {
 
         var nodes: [SkeletonNode] = []
         nodes.reserveCapacity(64)
+        let capture = root.frame.toPixels(scale: scale)
+        let captureBounds = Rect(
+            left: Double(capture.left), top: Double(capture.top),
+            right: Double(capture.right), bottom: Double(capture.bottom)
+        )
         // The root's own frame is the clip for everything: a view laid out beyond the window is not on
         // screen, and drawing it would put content outside the wireframe's own bounds.
-        collect(node: root, clip: root.frame, scale: scale, insideWidget: false, into: &nodes)
+        collect(node: root, clip: root.frame, scale: scale, insideWidget: false,
+                captureBounds: captureBounds, into: &nodes)
 
         let pixels = root.frame.toPixels(scale: scale)
         return SkeletonFrame(
@@ -111,11 +117,31 @@ public enum SkeletonBuilder {
         clip: Rect,
         scale: Double,
         insideWidget: Bool,
+        captureBounds: Rect,
         into nodes: inout [SkeletonNode]
     ) {
         guard nodes.count < maxNodes else { return }
         guard isVisible(node) else { return }
         guard let visible = node.frame.clipped(to: clip) else { return }
+
+        // What an opaque view hides is not part of this screen, whoever put it there.
+        //
+        // The same rule the mask uses, and it is here for the same reason: during a navigation transition both
+        // view controllers' views are in the window, so a wireframe of the screen being entered was drawing the
+        // rectangles of the screen being left. One rule, two outputs — see `CoveredContent`.
+        if CoveredContent.isOpaqueCover(node) {
+            let px = visible.toPixels(scale: scale)
+            let cover = Rect(
+                left: Double(px.left), top: Double(px.top),
+                right: Double(px.right), bottom: Double(px.bottom)
+            )
+            CoveredContent.discardCovered(&nodes, by: cover, captureBounds: captureBounds) { node in
+                Rect(
+                    left: Double(node.left), top: Double(node.top),
+                    right: Double(node.right), bottom: Double(node.bottom)
+                )
+            }
+        }
 
         // A container is emitted as an outline, and only when it has a background worth showing. An
         // empty container that draws nothing is not a thing the user saw, and filling the screen with
@@ -169,6 +195,7 @@ public enum SkeletonBuilder {
                 clip: childClip,
                 scale: scale,
                 insideWidget: childrenAreInsideWidget,
+                captureBounds: captureBounds,
                 into: &nodes
             )
         }

@@ -12,18 +12,8 @@ import UIKit
 ///    drift, and the one that drifts is the one that stops covering something.
 enum ScreenshotRenderer {
 
-    /// What gets covered.
-    struct MaskPolicy {
-        var text: Bool
-        var images: Bool
-
-        /// Text on, images off.
-        ///
-        /// Text is where the sensitive content is. Images are where the icons and logos are, and
-        /// covering them by default produces a screenshot of grey blocks that tells nobody anything —
-        /// so that one is opt-in.
-        static let `default` = MaskPolicy(text: true, images: false)
-    }
+    /// What gets covered. The rule itself lives in `MaskGeometry`, where a test can reach it.
+    typealias MaskPolicy = MaskGeometry.Policy
 
     /// A JPEG of the window, masked, or `nil` if there was nothing to draw.
     ///
@@ -74,54 +64,17 @@ enum ScreenshotRenderer {
 
     /// The rectangles to cover, in the window's own coordinate space.
     ///
-    /// Internal rather than private so a test can assert what a policy covers without rendering
-    /// anything — the same reason the geometry lives in `ViewSnapshot` and not in `UIView`.
+    /// A conversion and nothing else: `MaskGeometry` decides *what* is covered, including what an opaque view
+    /// hides. That used to be decided here, where no test could reach it, and it was wrong — a capture of one
+    /// screen carried the previous screen's mask rectangles.
     static func maskRects(in node: ViewSnapshot, policy: MaskPolicy, bounds: CGRect) -> [CGRect] {
-        var out: [CGRect] = []
-        collectMasks(node, policy: policy, bounds: bounds, into: &out)
-        return out
-    }
-
-    private static func collectMasks(
-        _ node: ViewSnapshot,
-        policy: MaskPolicy,
-        bounds: CGRect,
-        into out: inout [CGRect]
-    ) {
-        guard !node.isHidden, node.alpha > 0.05 else { return }
-
-        let covered: Bool
-        switch node.kind {
-        // A field's contents are text, and are more likely than a label to be someone's name, address
-        // or password. It follows the text policy because there is no case for covering labels and
-        // leaving fields legible.
-        case .text, .input:
-            covered = policy.text
-        case .image:
-            covered = policy.images
-        // Not covered: a button's own label is covered by the text node inside it if text masking is
-        // on, and covering the whole control would erase the screen's structure.
-        case .button, .container, .card, .webView, .unknown:
-            covered = false
-        }
-
-        if covered {
-            let rect = CGRect(
-                x: node.frame.left,
-                y: node.frame.top,
-                width: node.frame.width,
-                height: node.frame.height
-            ).intersection(bounds)
-            if !rect.isNull, rect.width > 0, rect.height > 0 {
-                out.append(rect)
-            }
-        }
-
-        // Children are walked even under a covered node: a covered image can contain a label, and the
-        // grey block over the image is not a guarantee about the label — the two rectangles may not
-        // coincide.
-        for child in node.children {
-            collectMasks(child, policy: policy, bounds: bounds, into: &out)
+        let area = Rect(
+            left: bounds.minX, top: bounds.minY, right: bounds.maxX, bottom: bounds.maxY
+        )
+        return MaskGeometry.rects(in: node, policy: policy, bounds: area).compactMap { rect in
+            let cg = CGRect(x: rect.left, y: rect.top, width: rect.width, height: rect.height)
+                .intersection(bounds)
+            return (cg.isNull || cg.width <= 0 || cg.height <= 0) ? nil : cg
         }
     }
 }

@@ -1,0 +1,7 @@
+// Explicit rather than generated, because two build systems consume this target: SwiftPM (which would generate one)
+// and the example's `build.sh`, which drives `swiftc` and `clang` directly and has nothing to generate it. One file
+// both can point at beats two paths that can disagree.
+module LightSessionSafe {
+    header "LightSessionSafe.h"
+    export *
+}

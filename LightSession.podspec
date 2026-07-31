@@ -5,8 +5,8 @@
 # on another pod. Without this file the bridge would have to vendor a copy of these sources, and a second copy
 # of an SDK is a second thing to keep in step — which it never is.
 #
-# The two must not drift, so there is exactly one source list and both read it: `Sources/LightSession/**/*.swift`
-# here, and the same directory as the package's target there. Adding a file needs no edit in either.
+# The two must not drift, so both read whole directories rather than listing files: the same trees the package's
+# targets name. Adding a file needs no edit in either.
 Pod::Spec.new do |s|
   s.name             = 'LightSession'
   s.version          = '0.1.0'
@@ -26,6 +26,14 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = '15.0'
   s.swift_version    = '5.9'
 
-  s.source_files     = 'Sources/LightSession/**/*.swift'
+  # Both source trees, one module.
+  #
+  # The Objective-C file is one function wrapping `-[CALayer presentationLayer]` in `@try/@catch`,
+  # because Swift cannot catch an Objective-C exception and that call can raise. The Swift package
+  # keeps it in a target of its own — SwiftPM allows one language per target — while a pod is a
+  # single mixed-language module, so the header comes in through the generated umbrella and
+  # `UIViewSnapshot` reaches the function without importing anything. The `module.modulemap` beside
+  # the header is not matched here on purpose: CocoaPods writes its own, and two would disagree.
+  s.source_files     = 'Sources/LightSession/**/*.swift', 'Sources/LightSessionSafe/**/*.{h,m}'
   s.frameworks       = 'UIKit', 'WebKit'
 end
