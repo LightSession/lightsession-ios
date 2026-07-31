@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>LightSessionExample</string>
+    <key>CFBundleIdentifier</key><string>com.lightsession.example</string>
+    <key>CFBundleName</key><string>LightSession</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>UILaunchScreen</key><dict/>
+    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array><string>UIInterfaceOrientationPortrait</string></array>
+    <!-- Plain HTTP to a local backend. The simulator shares the host's network stack, so the app talks
+         to 127.0.0.1 rather than the Android emulator's 10.0.2.2. -->
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict>
+</plist>

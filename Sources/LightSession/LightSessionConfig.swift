@@ -1,0 +1,125 @@
+import Foundation
+
+/// Everything the SDK needs, and nothing it can work out for itself.
+public struct LightSessionConfig: Sendable {
+
+    /// The project's key. Sent as `X-API-Key`.
+    public var apiKey: String
+
+    /// Base URL of the product API, no trailing slash. The screen map lives under it.
+    public var apiURL: String
+
+    /// Base URL of the **ingest** service, no trailing slash. Interaction batches go here.
+    ///
+    /// A second, genuinely different service — not a path under [apiURL]. On Android these are `apiUrl` and
+    /// `ingestUrl` for the same reason, and pointing one at the other fails with a 404 on everything it
+    /// carries. Optional here because an app that only wants the screen map does not need it; interactions
+    /// are simply not recorded without it, and the log says so once.
+    public var ingestURL: String?
+
+    /// Record taps and swipes. On by default, and does nothing without [ingestURL].
+    ///
+    /// This is what a touch heatmap is drawn from. Turning it off stops the SDK from watching touches at
+    /// all rather than merely discarding them.
+    public var trackInteractions: Bool
+
+    /// Record replay frames. On by default, and does nothing without [ingestURL].
+    public var enableReplay: Bool
+
+    /// Milliseconds between frames on a screen nobody is touching.
+    public var captureIntervalMillis: Int64
+
+    /// Milliseconds between frames while a finger is down.
+    ///
+    /// Faster on purpose. Touches arrive at 60–120 Hz and a static screen needs about one frame a second;
+    /// one interval has to be wrong for one of them.
+    public var interactionCaptureIntervalMillis: Int64
+
+    /// How long a session survives with nothing happening.
+    ///
+    /// **Must match the ingest service's own idle timeout.** Rotate sooner and one visit becomes two rows;
+    /// rotate later and events attach to a session the server has already sealed. 30 s is its default.
+    public var sessionTimeoutMillis: Int64
+
+    /// Whether the app names its own screens.
+    ///
+    /// **Required for SwiftUI, and not a preference.** A SwiftUI app's screens are values in a `body`,
+    /// and the controllers `NavigationStack` creates under them are private types whose names change
+    /// between releases — reading those is how an integration rots. So a SwiftUI app calls
+    /// `.lightSessionScreen("Name")` and sets this, and a UIKit app leaves it alone and is observed.
+    ///
+    /// Setting it without ever reporting a screen is the one failure the SDK cannot recover from on its
+    /// own, so it says so in the log rather than mapping nothing in silence.
+    public var screensReportedByHost: Bool
+
+    /// What kind of screen a host-reported name describes.
+    ///
+    /// `setScreen(_:)` is one call with two callers — a SwiftUI app and a React Native app — and neither the
+    /// call nor the SDK can tell which is on the other end. So the host says once, at startup, and every screen
+    /// it names is recorded as that. The React Native package sets it; nothing else needs to.
+    public var reportedScreenKind: ScreenIdentity.Kind
+
+    /// Upgrade a screen's wireframe to a real screenshot once it settles.
+    ///
+    /// On by default because the wireframe is a shape and the screenshot is the screen. Both are kept
+    /// server-side, in separate slots, so turning this off does not lose the wireframe.
+    public var captureRealScreens: Bool
+
+    /// Cover text before a capture leaves the device. **On by default**, and worth leaving on.
+    public var maskText: Bool
+
+    /// Cover images too. Off by default: it hides every icon and logo along with the photos.
+    public var maskImages: Bool
+
+    public init(
+        apiKey: String,
+        apiURL: String,
+        ingestURL: String? = nil,
+        screensReportedByHost: Bool = false,
+        reportedScreenKind: ScreenIdentity.Kind = .swiftUI,
+        captureRealScreens: Bool = true,
+        maskText: Bool = true,
+        maskImages: Bool = false,
+        trackInteractions: Bool = true,
+        enableReplay: Bool = true,
+        captureIntervalMillis: Int64 = 1_000,
+        interactionCaptureIntervalMillis: Int64 = 100,
+        sessionTimeoutMillis: Int64 = SessionIdentity.defaultIdleTimeoutMillis
+    ) {
+        self.apiKey = apiKey
+        self.apiURL = apiURL
+        self.ingestURL = ingestURL
+        self.screensReportedByHost = screensReportedByHost
+        self.reportedScreenKind = reportedScreenKind
+        self.captureRealScreens = captureRealScreens
+        self.maskText = maskText
+        self.maskImages = maskImages
+        self.trackInteractions = trackInteractions
+        self.enableReplay = enableReplay
+        self.captureIntervalMillis = captureIntervalMillis
+        self.interactionCaptureIntervalMillis = interactionCaptureIntervalMillis
+        self.sessionTimeoutMillis = sessionTimeoutMillis
+    }
+}
+
+/// The SDK's log.
+///
+/// `print` behind one function rather than at thirty call sites, so it is one edit to route this into
+/// `OSLog` or to silence it. Everything it prints is prefixed, because a library that writes
+/// unattributed lines into an app's console is a library the app's developer comes to resent.
+enum LightSessionLog {
+    static var isVerbose = false
+
+    static func debug(_ message: @autoclosure () -> String) {
+        guard isVerbose else { return }
+        print("[LightSession] \(message())")
+    }
+
+    static func info(_ message: @autoclosure () -> String) {
+        print("[LightSession] \(message())")
+    }
+
+    static func error(_ message: @autoclosure () -> String) {
+        print("[LightSession] error: \(message())")
+    }
+}
