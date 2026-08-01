@@ -34,6 +34,11 @@ extension UIView {
             clipsToBounds: clipsToBounds,
             declaresOpaque: isOpaque,
             children: subviews.map { $0.lightSessionSnapshot(in: window) }
+                // Then whatever this view's own layers draw that no subview stands for, which on a SwiftUI
+                // screen is most of the screen. Appended after the subviews rather than interleaved by depth:
+                // paint order decides which masks an opaque cover discards, and coming last means these are
+                // kept when in doubt — a mask too many rather than a word left legible.
+                + LayerContent.nodes(under: layer)
         )
     }
 
@@ -59,24 +64,9 @@ extension UIView {
     ///  * `layer.transform` is folded in, so a modal presentation — which scales the screen behind it — is measured
     ///    where it is drawn rather than where it would be at rest.
     func lightSessionFrame(in window: UIWindow) -> Rect {
-        let presented = LightSessionPresentationLayer(layer) ?? layer
-        let size = presented.bounds.size
-        let parent = layer.superlayer.map { LightSessionPresentationLayer($0) ?? $0 }
-        let position = parent?.convert(presented.position, to: nil) ?? presented.position
-
-        var transform = CGAffineTransform.identity
-        transform.tx = position.x
-        transform.ty = position.y
-        transform = CATransform3DGetAffineTransform(presented.transform).concatenating(transform)
-        transform = transform.translatedBy(
-            x: -size.width * presented.anchorPoint.x,
-            y: -size.height * presented.anchorPoint.y
-        )
-
-        // The bounding box of the transformed rectangle. `Rect` is axis-aligned and so is the wire format, so a
-        // rotated view is described by the box around it — larger than the view, which for a mask errs safe.
-        let rect = CGRect(origin: .zero, size: size).applying(transform)
-        return Rect(left: rect.minX, top: rect.minY, right: rect.maxX, bottom: rect.maxY)
+        // Asked of the layer, because a layer is what the arithmetic is about and because SwiftUI's content
+        // is layers with no view to ask. One implementation, two callers.
+        layer.lightSessionFrame()
     }
 
     /// What this view is, for the purposes of a wireframe.
@@ -159,4 +149,8 @@ extension UIWindow {
         lightSessionBackgroundColor ?? rootViewController?.view?.lightSessionBackgroundColor
     }
 }
+
+/// Marks a view as walked in its own right, so `LayerContent` leaves its layer alone. Without this the
+/// mask of every UIKit view would be emitted twice: once for the view, once for the layer behind it.
+extension UIView: UIViewLike {}
 #endif
