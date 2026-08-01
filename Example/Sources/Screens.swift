@@ -43,6 +43,10 @@ final class HubViewController: UIViewController {
             guard #available(iOS 16.0, *) else { return UIViewController() }
             return UIHostingController(rootView: RoutedRootScreens())
         }),
+        ("sheetreturn", "A sheet, and what comes after it", {
+            guard #available(iOS 16.0, *) else { return UIViewController() }
+            return UIHostingController(rootView: SheetReturnScreens())
+        }),
         ("hostnamed", "Tabs and a stack, named", {
             guard #available(iOS 16.0, *) else { return UIViewController() }
             return UIHostingController(rootView: HostNamedScreens())

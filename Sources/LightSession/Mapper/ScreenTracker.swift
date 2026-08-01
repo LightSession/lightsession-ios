@@ -130,6 +130,9 @@ final class ScreenTracker {
             ViewControllerObserver.onWillAppear = { [weak self] controller in
                 self?.rememberTitleOnEntry(of: controller)
             }
+            ViewControllerObserver.onDisappear = { [weak self] _ in
+                self?.somethingLeftTheScreen()
+            }
             ViewControllerObserver.install()
         }
 
@@ -224,6 +227,30 @@ final class ScreenTracker {
     /// between two names for one screen — a navigation the user never made, which is the exact bug
     /// the host-report grace exists to avoid. So nothing is reported until there is an answer: now if
     /// the title is there, after the same short grace if it is not.
+    /// Re-reads what is on screen after something goes away.
+    ///
+    /// The signal a sheet does not otherwise give. A SwiftUI sheet is a page sheet, so the screen it
+    /// covers is never removed from the hierarchy and gets no appearance callback when the sheet
+    /// closes. Measured before this existed: opening a sheet over `Screen A` and closing it left the
+    /// SDK on `The Sheet` for the rest of the session, and the screenshot taken once the quiet period
+    /// elapsed showed `Screen A` and was stored as the sheet's.
+    ///
+    /// Deliberately not filtered by *which* controller left. A pop and a push also produce a
+    /// disappearance, and re-reading is harmless there: the top of the hierarchy is what it already
+    /// was, and `report` drops a name that has not changed. Cheap for the same reason — a screen going
+    /// away is a rare event next to a frame.
+    private func somethingLeftTheScreen() {
+        // After the run loop turn: during `viewDidDisappear` the hierarchy is still mid-transition and
+        // the controller on its way out can still be the top one.
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let window = UIApplication.shared.lightSessionKeyWindow,
+                  let top = window.lightSessionTopController
+            else { return }
+            self.observed(top)
+        }
+    }
+
     /// Notes what a screen calls itself on the way in, before anything it is fetching comes back.
     ///
     /// Kept for hosting controllers only. A UIKit screen is named after its class and has no use for

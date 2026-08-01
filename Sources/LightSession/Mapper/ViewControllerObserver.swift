@@ -31,6 +31,15 @@ final class ViewControllerObserver {
     /// Called before the transition, so a title can be read before the screen's data replaces it.
     static var onWillAppear: ((UIViewController) -> Void)?
 
+    /// Called when a controller goes away, which for a sheet is the only signal there is.
+    ///
+    /// A SwiftUI sheet is a page sheet: the screen underneath is never removed from the hierarchy, so
+    /// closing the sheet emits no `viewWillAppear` and no `viewDidAppear` for the screen coming back.
+    /// Without this the SDK stays on the sheet for the rest of the session — measured, and worse than
+    /// a wrong name: the screenshot taken after the quiet period showed the screen underneath and was
+    /// filed under the sheet.
+    static var onDisappear: ((UIViewController) -> Void)?
+
     private static var installed = false
 
     static func install() {
@@ -60,6 +69,15 @@ final class ViewControllerObserver {
             LightSessionLog.error("could not hook viewWillAppear; SwiftUI titles may name records")
         }
 
+        if let didDisappear = class_getInstanceMethod(cls, #selector(UIViewController.viewDidDisappear(_:))),
+           let replacement = class_getInstanceMethod(
+               cls, #selector(UIViewController.lightSession_viewDidDisappear(_:))
+           ) {
+            method_exchangeImplementations(didDisappear, replacement)
+        } else {
+            LightSessionLog.error("could not hook viewDidDisappear; a closed sheet will not be noticed")
+        }
+
         let original = #selector(UIViewController.viewDidAppear(_:))
         let replacement = #selector(UIViewController.lightSession_viewDidAppear(_:))
 
@@ -78,6 +96,35 @@ final class ViewControllerObserver {
     }
 }
 
+extension UIWindow {
+    /// The controller the user is actually looking at.
+    ///
+    /// Presented first, then children: a sheet is presented *by* the screen under it, and a tab bar's
+    /// selected tab is a child. Walking in that order lands on the leaf rather than on a container.
+    var lightSessionTopController: UIViewController? {
+        var current = rootViewController
+        while true {
+            if let presented = current?.presentedViewController {
+                current = presented
+                continue
+            }
+            if let nav = current as? UINavigationController, let top = nav.topViewController {
+                current = top
+                continue
+            }
+            if let tabs = current as? UITabBarController, let selected = tabs.selectedViewController {
+                current = selected
+                continue
+            }
+            if let child = current?.children.last, child !== current {
+                current = child
+                continue
+            }
+            return current
+        }
+    }
+}
+
 extension UIViewController {
     @objc fileprivate func lightSession_viewDidAppear(_ animated: Bool) {
         // The implementations are exchanged, so this call reaches the original.
@@ -89,6 +136,11 @@ extension UIViewController {
     @objc fileprivate func lightSession_viewWillAppear(_ animated: Bool) {
         lightSession_viewWillAppear(animated)
         ViewControllerObserver.onWillAppear?(self)
+    }
+
+    @objc fileprivate func lightSession_viewDidDisappear(_ animated: Bool) {
+        lightSession_viewDidDisappear(animated)
+        ViewControllerObserver.onDisappear?(self)
     }
 
     /// Whether this controller hosts SwiftUI content, including through a subclass of its own.
