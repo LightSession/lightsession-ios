@@ -17,6 +17,7 @@ struct RoutedRootScreens: View {
 
     @State private var route = Route.loading
     @State private var path = NavigationPath()
+boa    @State private var sheetUp = false
 
     var body: some View {
         Group {
@@ -24,7 +25,18 @@ struct RoutedRootScreens: View {
             case .loading:
                 Text("Splash").font(.largeTitle)
             case .login:
+                // A sheet raised from a screen the *route* names, which is the combination that broke.
+                // The screen underneath has no name of its own — the app names it — so re-reading the
+                // controller after the sheet closes finds nothing, and the SDK used to stay on the
+                // sheet. Measured on a real app: `Login -> Esqueci minha senha -> Ativar conta`, no way
+                // back, and the second sheet's screenshot was a picture of the login screen.
                 VStack(spacing: 12) { Text("Login").font(.largeTitle); Text("email") }
+                    .sheet(isPresented: $sheetUp) {
+                        NavigationStack {
+                            Text("Forgot your password?")
+                                .padding().navigationTitle("Forgot password")
+                        }
+                    }
             case .doctorDetail(let id):
                 VStack { Text("Doctor").font(.largeTitle); Text(id) }
             case .home:
@@ -48,11 +60,27 @@ struct RoutedRootScreens: View {
     /// two to prove a payload does not become a node of its own.
     private func walkIfAsked() {
         guard UserDefaults.standard.bool(forKey: "demoNav") else { return }
+        // A sheet up and down while the route stays `.login`, before anything else happens.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            print("[demo] sheet up over the routed login")
+            sheetUp = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            print("[demo] sheet down — must come back to login")
+            sheetUp = false
+        }
+
         let script: [(Double, Route)] = [
             (2, .login),
-            (4, .doctorDetail("dr-carlos")),
-            (6, .doctorDetail("dra-ana")),
-            (8, .home),
+            (7, .doctorDetail("dr-carlos")),
+            (9, .doctorDetail("dra-ana")),
+            (11, .home),
+            // Back to a route while a titled screen is mounted — the logout shape. The stack under
+            // `.home` is torn down, which fires `viewDidDisappear` with its titled controller briefly
+            // still on top. Reading it there reported the screen the user had just left and undid the
+            // route change: measured on a real app as `Perfil -> Login` followed, in the same second,
+            // by `Login -> Perfil`.
+            (17, .login),
         ]
         for (after, next) in script {
             DispatchQueue.main.asyncAfter(deadline: .now() + after) {
@@ -62,7 +90,7 @@ struct RoutedRootScreens: View {
         }
         // Once inside the stack, push a titled screen: the route has been named, and the title must
         // still be read.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 11) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 14) {
             print("[demo] push inside the stack -> expect \"Message\"")
             path.append("detail")
         }

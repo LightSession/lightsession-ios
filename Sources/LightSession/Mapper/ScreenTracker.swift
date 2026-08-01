@@ -34,6 +34,15 @@ final class ScreenTracker {
     /// Bumped on every host report, so a pending container report can tell whether the app spoke
     /// while it was waiting. A boolean would not: the app may have reported *before* the wait began.
     private var hostReportCount = 0
+    /// The last name the app itself gave a screen.
+    ///
+    /// Kept so a screen the app named can be *restored*, not just recorded. A sheet over it names
+    /// itself and takes over as the current screen; when the sheet closes the platform says nothing,
+    /// and re-reading the controller underneath finds nothing to read either — the app names that
+    /// screen, the controller does not. Without this the SDK stays on the sheet: measured, the flow
+    /// went `Login -> Esqueci minha senha -> Ativar conta` with no way back to `Login`, and the real
+    /// screenshot of `Ativar conta` was a picture of the login screen.
+    private var lastHostReported: String?
     private var adviceGiven = false
     /// The distinct titles auto-naming has accepted, which is what the limit is counted against.
     private var titlesSeen: Set<String> = []
@@ -247,6 +256,26 @@ final class ScreenTracker {
                   let window = UIApplication.shared.lightSessionKeyWindow,
                   let top = window.lightSessionTopController
             else { return }
+
+            // The app's own word beats a re-read, and this is the check that makes the difference
+            // between restoring a screen and resurrecting one.
+            //
+            // Logging out replaces the whole tree. The route changes, the app reports `Login`, and the
+            // tabs are torn down — which fires `viewDidDisappear`, and the controller being torn down
+            // is briefly still the top one. Re-reading it reported the screen the user had just left.
+            // Measured on a real app, twice in one session, in the same second:
+            //
+            //     22:00:27  Perfil -> Login      the logout
+            //     22:00:27  Login  -> Perfil     this handler undoing it
+            //
+            // Everything after was then attributed to `Perfil`, including a `Perfil -> Esqueci minha
+            // senha` that no one could have walked.
+            //
+            // When what is current is exactly what the app last named, nothing has been covered and
+            // there is nothing to restore. A sheet is the opposite case — the sheet's own name is
+            // current, the app's is not — and that is where the re-read is wanted.
+            if let named = self.lastHostReported, self.lastReported == named { return }
+
             self.observed(top)
         }
     }
@@ -367,7 +396,15 @@ final class ScreenTracker {
             // Checked outside the grace as well, because the app may have reported *before* the wait
             // began: `.lightSessionScreen(for:)` on a routed root fires at launch, and the pending
             // fallback put a placeholder node between `loading` and `login`.
-            LightSessionLog.debug("\(container) is the box the app's SwiftUI screens are drawn in; not a screen")
+            //
+            // The container is not reported — but whatever the app last named still is. Re-stating it
+            // is what brings a screen back after a sheet over it closes, and it costs nothing when the
+            // screen never changed: `report` drops a name that is already current.
+            if let restored = lastHostReported {
+                enter(screen: restored, kind: config.reportedScreenKind, transition: "report")
+            } else {
+                LightSessionLog.debug("\(container) is the box the app's SwiftUI screens are drawn in; not a screen")
+            }
 
         case .placeholder:
             adviseSwiftUIIsUnnamed(host: container, mappedTo: unnamedSwiftUIScreenName)
@@ -409,6 +446,7 @@ final class ScreenTracker {
         }
         hostHasReported = true
         hostReportCount += 1
+        lastHostReported = trimmed
         enter(screen: trimmed, kind: config.reportedScreenKind, transition: "report")
     }
 
