@@ -37,6 +37,12 @@ final class HubViewController: UIViewController {
             guard #available(iOS 16.0, *) else { return UIViewController() }
             return UIHostingController(rootView: TitledScreens())
         }),
+        // A root that swaps its content, named by the app's route in one line. The shape that emits
+        // no UIKit event at all.
+        ("routed", "A root switch, named by its route", {
+            guard #available(iOS 16.0, *) else { return UIViewController() }
+            return UIHostingController(rootView: RoutedRootScreens())
+        }),
         ("hostnamed", "Tabs and a stack, named", {
             guard #available(iOS 16.0, *) else { return UIViewController() }
             return UIHostingController(rootView: HostNamedScreens())
