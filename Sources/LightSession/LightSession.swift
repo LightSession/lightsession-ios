@@ -210,14 +210,48 @@ public enum LightSession {
         let centre = NotificationCenter.default
         centre.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
             session.markBackgrounded()
-            interactions?.flushNow()
-            replay?.flushNow(reason: .background)
-            drain?.drain()
+            uploadWhatIsLeft()
         }
         centre.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
             // Time in the background is idle time — the server's reaper does not care why nothing arrived.
             session.markForegrounded()
         }
+    }
+
+    /// Flushes and uploads with the process kept alive until the uploads answer.
+    ///
+    /// The background task is the whole point, and it is what was missing. Writing the batch to disk is fast and
+    /// always worked; the upload is a network request, and a request started as the app leaves is a request the
+    /// system suspends a moment later, half-sent. The batch survived on disk and went out on the *next* launch —
+    /// so a person who recorded a session and closed the app saw no replay until they opened the app again.
+    /// Measured twice, on two recordings: every frame present in the spool, nothing on the server.
+    ///
+    /// Ordering matters here. The task is begun before the flush rather than after, because the flush itself
+    /// encodes and writes a batch, and that work wants the same protection as the request that follows it.
+    private static func uploadWhatIsLeft() {
+        let application = UIApplication.shared
+        var identifier = UIBackgroundTaskIdentifier.invalid
+        // Captured by reference, so it sees the identifier assigned below rather than `.invalid`. Guarded because
+        // whichever of the two paths arrives first — the drain finishing or the system running out of patience —
+        // must be the only one to end the task.
+        let finish = {
+            guard identifier != .invalid else { return }
+            application.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+        identifier = application.beginBackgroundTask(withName: "LightSession upload", expirationHandler: finish)
+
+        interactions?.flushNow()
+        replay?.flushNow(reason: .background)
+
+        guard identifier != .invalid else {
+            // No time granted — the app is being suspended now, or already is. The spool keeps what the flush
+            // wrote and the next launch drains it, which is the behaviour this method exists to improve on
+            // rather than the failure it replaces.
+            drain?.drain()
+            return
+        }
+        drain?.drain(completion: finish)
     }
 
     /// A stable id for this install, so a returning person is recognisable across sessions.

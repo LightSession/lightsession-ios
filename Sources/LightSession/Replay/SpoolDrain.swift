@@ -19,7 +19,9 @@ final class SpoolDrain {
     private let spool: BatchSpool
     private let breadcrumbs: BreadcrumbSender
     private let frames: FrameSender
+    /// Both of these are read and written on the main queue only — see [onMain].
     private var isDraining = false
+    private var waiting: [() -> Void] = []
     private var timer: Timer?
 
     init(spool: BatchSpool, breadcrumbs: BreadcrumbSender, frames: FrameSender) {
@@ -44,36 +46,57 @@ final class SpoolDrain {
         timer = nil
     }
 
-    func drain() {
-        guard !isDraining else { return }
-        let pending = spool.pending()
-        guard !pending.isEmpty else { return }
-        isDraining = true
-        upload(pending, at: 0)
+    /// Uploads what is on disk, and says when there is nothing left to do.
+    ///
+    /// - Parameter completion: called on the main queue once the spool is empty or an upload failed — which
+    ///   are the two ways this stops. Asked for by the backgrounding path, which holds the process alive until
+    ///   then; everything else fires and forgets. A caller who asks while a drain is already running is added
+    ///   to the same answer rather than starting a second one.
+    func drain(completion: (() -> Void)? = nil) {
+        onMain {
+            if let completion { self.waiting.append(completion) }
+            guard !self.isDraining else { return }
+            let pending = self.spool.pending()
+            guard !pending.isEmpty else { return self.settle() }
+            self.isDraining = true
+            self.upload(pending, at: 0)
+        }
     }
 
     /// Recursive rather than a loop because each upload is asynchronous, and the next must not start until this
     /// one has answered — otherwise "stop on the first failure" cannot be honoured.
     private func upload(_ entries: [BatchSpool.Entry], at index: Int) {
         guard index < entries.count else {
+            // A pass works from the list it started with, so anything written while it ran — the batch a
+            // backgrounding just flushed, most of all — is not in `entries`. Another pass picks it up, and this
+            // terminates because a pass that gets this far has emptied what it was given.
+            let more = spool.pending()
+            guard more.isEmpty else { return upload(more, at: 0) }
             isDraining = false
+            settle()
             return
         }
         let entry = entries[index]
 
         let finish: (Result<Void, Error>) -> Void = { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success:
-                // Deleted only now. This is what "the server has it" means, and doing it before the answer is
-                // how a batch is lost to a request that never landed.
-                self.spool.remove(entry)
-                self.upload(entries, at: index + 1)
-            case .failure(let error):
-                LightSessionLog.debug(
-                    "\(entry.kind.rawValue) batch \(entry.sequence) will be retried: \(error.localizedDescription)"
-                )
-                self.isDraining = false
+            // Hopped to the main queue because the sender answers on the session's own queue, and the
+            // bookkeeping below — and the caller waiting on `completion` — must not be touched from two
+            // threads at once.
+            self?.onMain {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    // Deleted only now. This is what "the server has it" means, and doing it before the answer is
+                    // how a batch is lost to a request that never landed.
+                    self.spool.remove(entry)
+                    self.upload(entries, at: index + 1)
+                case .failure(let error):
+                    LightSessionLog.debug(
+                        "\(entry.kind.rawValue) batch \(entry.sequence) will be retried: \(error.localizedDescription)"
+                    )
+                    self.isDraining = false
+                    self.settle()
+                }
             }
         }
 
@@ -96,6 +119,25 @@ final class SpoolDrain {
                 return
             }
             frames.send(metadata: payload.metadata, frames: payload.frames, completion: finish)
+        }
+    }
+
+    /// Tells everyone who asked that there is nothing more this can do right now.
+    private func settle() {
+        let callbacks = waiting
+        waiting = []
+        for callback in callbacks { callback() }
+    }
+
+    /// Runs on the main queue, now if that is already where we are.
+    ///
+    /// `async` unconditionally would turn `drain()` from the flush path into something that happens *after* the
+    /// caller returns, which is the one ordering the backgrounding path cannot have.
+    private func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
         }
     }
 
