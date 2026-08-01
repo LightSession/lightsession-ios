@@ -64,9 +64,10 @@ final class ReportedScreenKindTests: XCTestCase {
     func testTheWireWordsMatchWhatTheServerParses() {
         XCTAssertEqual(ScreenIdentity.Kind.uiKit.rawValue, "UIKIT")
         XCTAssertEqual(ScreenIdentity.Kind.swiftUI.rawValue, "SWIFTUI")
-        // The same word the Android SDK sends, so one app's two builds land on one node in the graph rather
+        // The same words the Android SDK sends, so one app's two builds land on one node in the graph rather
         // than on two that differ only by platform.
         XCTAssertEqual(ScreenIdentity.Kind.reactNative.rawValue, "REACT_NATIVE")
+        XCTAssertEqual(ScreenIdentity.Kind.flutter.rawValue, "FLUTTER")
     }
 
     func testSwiftUIIsTheDefaultAndReactNativeIsOptedInto() {
@@ -81,8 +82,13 @@ final class ReportedScreenKindTests: XCTestCase {
     }
 
     /// The bridge sends the kind across as a string, so an unknown one must fall back rather than crash.
+    ///
+    /// This used to spell the unknown one `"FLUTTER"`, which stopped being unknown the day a Flutter SDK
+    /// was written — and the test failed for the one reason a test should never fail, which is that the
+    /// thing it was standing for came true. The placeholder is now a word no platform will ever send.
     func testAnUnknownKindIsNotRepresentable() {
-        XCTAssertNil(ScreenIdentity.Kind(rawValue: "FLUTTER"))
+        XCTAssertNil(ScreenIdentity.Kind(rawValue: "NOT_A_PLATFORM"))
         XCTAssertEqual(ScreenIdentity.Kind(rawValue: "REACT_NATIVE"), .reactNative)
+        XCTAssertEqual(ScreenIdentity.Kind(rawValue: "FLUTTER"), .flutter)
     }
 }

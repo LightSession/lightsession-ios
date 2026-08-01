@@ -13,7 +13,8 @@ public enum ScreenIdentity {
     public enum Kind: String, Sendable {
         /// A `UIViewController` the SDK saw appear.
         case uiKit = "UIKIT"
-        /// A SwiftUI screen the app named.
+        /// A SwiftUI screen: one the app named, or the placeholder node an app that named none is
+        /// collapsed onto.
         case swiftUI = "SWIFTUI"
         /// A screen a JavaScript navigator named.
         ///
@@ -22,6 +23,17 @@ public enum ScreenIdentity {
         /// Native screen arrived labelled `SWIFTUI`, which is a lie that reads as a bug — the host reports it
         /// through the same call a SwiftUI app uses, and the call cannot tell who is on the other end.
         case reactNative = "REACT_NATIVE"
+
+        /// A screen a Dart navigator named.
+        ///
+        /// Flutter has React Native's problem and one more. It is one view controller, so nothing UIKit
+        /// offers distinguishes its screens — that part is identical. It also renders to a single
+        /// surface, so unlike React Native there is no view tree underneath either: the wireframe and
+        /// the mask have to come from the app as well as the name.
+        ///
+        /// Its own value rather than reusing `reactNative`, for the reason `reactNative` exists at all:
+        /// a label that names the wrong framework is a lie that reads as a bug.
+        case flutter = "FLUTTER"
     }
 
     /// Turns a view controller's type name into a screen name.
