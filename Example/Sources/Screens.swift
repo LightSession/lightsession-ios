@@ -30,6 +30,13 @@ final class HubViewController: UIViewController {
         ("unnamed", "SwiftUI with no name", { UIHostingController(rootView: UnnamedSwiftUIScreen()) }),
         // Tabs and a navigation stack, every screen named by the app. Run it with
         // `-demoHostNamesScreens 1 -demoNav 1`, which is the configuration a SwiftUI app ships.
+        // The shape a real SwiftUI app has and the one this feature is for: a NavigationStack whose
+        // screens carry `.navigationTitle` and nothing else. No `.lightSessionScreen` anywhere — the
+        // SDK is expected to read the titles the app already wrote for its users.
+        ("titled", "A stack with titles and no annotations", {
+            guard #available(iOS 16.0, *) else { return UIViewController() }
+            return UIHostingController(rootView: TitledScreens())
+        }),
         ("hostnamed", "Tabs and a stack, named", {
             guard #available(iOS 16.0, *) else { return UIViewController() }
             return UIHostingController(rootView: HostNamedScreens())
