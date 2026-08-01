@@ -11,10 +11,40 @@
     <key>LSRequiresIPhoneOS</key><true/>
     <key>UILaunchScreen</key><dict/>
     <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+    <!-- An iPad gives a native window only to an app that adopts scenes. Without this the app runs in
+         the legacy 320x480 compatibility box in the middle of the display, which reads as a blank iPad. -->
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key><false/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key><string>Default</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>SceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
+    <!-- Portrait on a phone; an iPad is held whichever way, and refusing landscape there is what makes a
+         window that cannot be resized. -->
     <key>UISupportedInterfaceOrientations</key>
     <array><string>UIInterfaceOrientationPortrait</string></array>
-    <!-- Plain HTTP to a local backend. The simulator shares the host's network stack, so the app talks
-         to 127.0.0.1 rather than the Android emulator's 10.0.2.2. -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <!-- Plain HTTP to a backend on the local network, which is what `NSAllowsLocalNetworking` permits:
+         private addresses and `.local`, without turning off transport security everywhere. -->
+    <!-- iOS 14 and later gate any connection to a local-network address behind a prompt, and an app
+         with no reason string never gets to ask: the request just fails. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Sends recorded sessions to a LightSession backend running on your computer.</string>
     <key>NSAppTransportSecurity</key>
     <dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>

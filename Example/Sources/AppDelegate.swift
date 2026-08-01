@@ -4,8 +4,6 @@ import LightSession
 /// The whole integration for a UIKit app: one call, and no screen in this file knows the SDK exists.
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
-    var window: UIWindow?
-    private var navigation: UINavigationController?
 
     func application(
         _ application: UIApplication,
@@ -14,12 +12,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         LightSession.start(
             .init(
                 // 127.0.0.1 works from the iOS simulator: it shares the host's network stack, unlike the
-                // Android emulator, which needs 10.0.2.2.
+                // Android emulator, which needs 10.0.2.2. A real device needs this machine's LAN address.
                 apiKey: "dev-key",
                 apiURL: "http://127.0.0.1:3002",
                 // A different service from the API: interaction batches go to the ingest, and pointing one
                 // at the other 404s everything it carries.
                 ingestURL: "http://127.0.0.1:5055",
+                // Off by default because this sample is mostly UIKit and UIKit names its own screens.
+                // `-demoHostNamesScreens 1` turns it on, which is what a SwiftUI app ships and therefore
+                // what has to be exercised: with it on the swizzle is not installed at all, and every
+                // name in the map has to have come from `.lightSessionScreen`.
+                screensReportedByHost: UserDefaults.standard.bool(forKey: "demoHostNamesScreens"),
                 // 300 ms instead of the default second: a smoother replay, and the frame budget it costs
                 // is the point of measuring it rather than guessing.
                 captureIntervalMillis: 300
@@ -27,15 +30,45 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             verbose: true
         )
 
+        return true
+    }
+}
+
+/// The window, which on iPadOS has to come from a scene.
+///
+/// This used to be three lines in `didFinishLaunching` around `UIScreen.main.bounds`, which is fine on a
+/// phone and is why nobody noticed. An app with no `UIApplicationSceneManifest` does not get a native
+/// window on an iPad: iPadOS runs it in the legacy 320×480 compatibility box, floating in the middle of
+/// the display with window chrome around it. It looks like a blank iPad with a sliver of app on it, and
+/// the SDK reported the screen as 640×960 because that genuinely was the window.
+///
+/// Adopting scenes is also what lets the sample be a size other than a phone, which is the point of
+/// running it on an iPad at all.
+/// Named for Objective-C so the plist can name it back.
+///
+/// A scene delegate is found by string, and Xcode writes `$(PRODUCT_MODULE_NAME).SceneDelegate` because it
+/// substitutes that at build time. This sample is built by `swiftc` with no such substitution, so the plist
+/// would carry the literal text and UIKit would find nothing. `@objc` gives the class a name with no module
+/// in front of it, which is a name a plist can state without knowing how the app was built.
+@objc(SceneDelegate)
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+    private var navigation: UINavigationController?
+
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) {
+        guard let windowScene = scene as? UIWindowScene else { return }
         let navigation = UINavigationController(rootViewController: HubViewController())
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = UIWindow(windowScene: windowScene)
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         self.window = window
         self.navigation = navigation
 
         walkRoutesIfAsked()
-        return true
     }
 
     /// Walks a list of screens on its own, when launched with `-demoRoutes pushed,form,list`.

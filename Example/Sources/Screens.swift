@@ -24,6 +24,16 @@ final class HubViewController: UIViewController {
         ("list", "Table of rows", { ListViewController() }),
         ("tabs", "Tab bar", { TabsViewController() }),
         ("swiftui", "SwiftUI screens", { SwiftUIHostViewController() }),
+        // A *plain* `UIHostingController`, which is what a SwiftUI app that never touched UIKit has.
+        // The class belongs to SwiftUI rather than to the app, and its name is a mangled generic that
+        // changes with the iOS release — so this is the one route the SDK is expected to refuse to name.
+        ("unnamed", "SwiftUI with no name", { UIHostingController(rootView: UnnamedSwiftUIScreen()) }),
+        // Tabs and a navigation stack, every screen named by the app. Run it with
+        // `-demoHostNamesScreens 1 -demoNav 1`, which is the configuration a SwiftUI app ships.
+        ("hostnamed", "Tabs and a stack, named", {
+            guard #available(iOS 16.0, *) else { return UIViewController() }
+            return UIHostingController(rootView: HostNamedScreens())
+        }),
     ]
 
     static func route(named slug: String) -> UIViewController? {
@@ -107,6 +117,9 @@ final class PushedViewController: UIViewController {
 
 /// Real content in real fields, so the masking is tested against something worth masking.
 final class FormViewController: UIViewController {
+
+    private var fields: [UITextField] = []
+
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Form"
@@ -138,6 +151,21 @@ final class FormViewController: UIViewController {
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
         ])
+
+        self.fields = fields
+    }
+
+    /// Raises the keyboard on `-demoKeyboard 1`, because the keyboard is a test case.
+    ///
+    /// Tapping a text field brings six view controllers on screen that the app did not write — the
+    /// prediction bar, the input assistant, the keyboard dock, the cursor accessory and the windows
+    /// holding them — and each one calls `viewDidAppear`. A run against a real app mapped all of them
+    /// as screens the user had navigated to. There is no way to tap a field from a script, so the
+    /// sample offers to do it itself; the SDK knows nothing about this flag.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard UserDefaults.standard.bool(forKey: "demoKeyboard") else { return }
+        fields.first?.becomeFirstResponder()
     }
 }
 
@@ -198,8 +226,35 @@ final class SwiftUIHostViewController: UIHostingController<SwiftUIRoot> {
     required init?(coder: NSCoder) { fatalError("not used") }
 }
 
+/// A SwiftUI screen with no name on it, hosted by SwiftUI's own controller.
+///
+/// The case a whole app can be built out of without noticing. It is here so the SDK's refusal to name it
+/// is exercised by the sample rather than only by somebody's production app: what should be recorded is
+/// one node called "SwiftUI (unnamed)", and a line in the log saying which call fixes it.
+struct UnnamedSwiftUIScreen: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("No .lightSessionScreen here")
+                .font(.headline)
+            Text(
+                "This is hosted by SwiftUI's own UIHostingController, whose class name is a mangled "
+                    + "generic. The SDK maps it to one placeholder node instead of naming it."
+            )
+            .font(.footnote)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+        }
+        .padding()
+    }
+}
+
 struct SwiftUIRoot: View {
-    @State private var showingSheet = false
+    /// Opens with the sheet up when launched with `-demoSheet YES`.
+    ///
+    /// The same scaffolding as `-demoRoutes` and for the same reason: the simulator has no way to
+    /// tap a button from a script, and masking a modal is exactly the case that can only be checked
+    /// with the modal on screen. Nothing in the SDK knows this exists.
+    @State private var showingSheet = UserDefaults.standard.bool(forKey: "demoSheet")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
