@@ -51,6 +51,84 @@ public struct ScreenSourcePlan: Equatable, Sendable {
     }
 }
 
+/// What a controller that just appeared actually is.
+///
+/// Asked before anything is named, because most of what `viewDidAppear` delivers is not a screen and
+/// naming it is not a smaller version of the right answer — it is a different app's map. A run against a
+/// real SwiftUI app produced fifteen screens, eleven of them UIKit's own: the keyboard, its prediction
+/// bar, its dock, the input assistant, the cursor accessory, Safari's password autofill. Every one of
+/// them appeared because the user tapped a text field.
+public enum ObservedControllerRole: Equatable, Sendable {
+    /// A place in the app, named after its class.
+    case screen
+
+    /// A navigation, tab, split or page controller, or an alert. Its child is the screen.
+    case container
+
+    /// A controller the app does not own: it came out of a system framework.
+    ///
+    /// The test is the bundle its class was loaded from, not its name. A name list would have to
+    /// enumerate `UIPredictionViewController`, `UISystemInputAssistantViewController`,
+    /// `_UICursorAccessoryViewController` and whatever iOS 27 renames them to; the bundle is a fact
+    /// about where the code came from and needs no maintenance.
+    case systemFurniture
+
+    /// A hosting controller belonging to SwiftUI itself.
+    ///
+    /// Distinguished from `systemFurniture` because it means something specific and actionable: the
+    /// app's screens are *inside* this, and the app has not named them.
+    case unnamedSwiftUIHost
+
+    /// Not on screen. `viewDidAppear` fires for a controller whose window has already gone.
+    case offscreen
+}
+
+/// What a controller is, as a function of four facts about it.
+///
+/// Order is the content of this function:
+///
+///  * **Off screen first**, because nothing else about a controller matters if the user cannot see it.
+///  * **Container next**, and before ownership, so an app's own `UINavigationController` subclass is
+///    still furniture rather than a place.
+///  * **Ownership before the SwiftUI test**, so an app that subclasses `UIHostingController` — which is
+///    routine, and which the sample does — keeps the older handling that waits for the app to name the
+///    screen and reports the container if it never does. Only SwiftUI's *own* hosting controllers, whose
+///    names are mangled generics that change between releases, fall through to the case below.
+public func roleOfObservedController(
+    isOnScreen: Bool,
+    isContainer: Bool,
+    isOwnedByApp: Bool,
+    isHostingController: Bool
+) -> ObservedControllerRole {
+    guard isOnScreen else { return .offscreen }
+    if isContainer { return .container }
+    if isOwnedByApp { return .screen }
+    if isHostingController { return .unnamedSwiftUIHost }
+    return .systemFurniture
+}
+
+/// Whether code at `bundlePath` is the app itself or something the app ships inside it.
+///
+/// Kept here, away from `Bundle`, so the one thing that can go wrong about it can be tested: the
+/// separator has to be part of the prefix. Without it `MyApp.app.dSYM` sits inside `MyApp.app`, and a
+/// framework's `.app`-prefixed neighbour would be treated as the app's own code.
+public func isPathInsideApp(_ bundlePath: String, appPath: String) -> Bool {
+    bundlePath == appPath || bundlePath.hasPrefix(appPath + "/")
+}
+
+/// The one node an unnamed SwiftUI app is mapped to.
+///
+/// Not the hosting controller's class name, which is what produced the bug this exists to answer: a
+/// SwiftUI screen is drawn by whichever of `UIHostingController`, `PresentationHostingController` or
+/// `NavigationStackHostingController` happens to hold it, so one app walking through four screens
+/// recorded seven navigations between three names that stood for the same thing.
+///
+/// Mapped to *something* rather than to nothing, deliberately. An SDK that records a session with no
+/// screen on it looks installed and is not, and that is the failure that takes longest to notice. One
+/// node that says what is wrong is worth more than silence, and the name is written to be read as a
+/// problem by whoever opens the dashboard.
+public let unnamedSwiftUIScreenName = "SwiftUI (unnamed)"
+
 /// What to do with a controller the SDK just saw appear.
 public enum ObservedControllerAction: Equatable, Sendable {
     /// It is a screen. Report it.

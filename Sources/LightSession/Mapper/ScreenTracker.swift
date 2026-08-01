@@ -119,6 +119,34 @@ final class ScreenTracker {
         let name = ScreenIdentity.screenName(fromTypeName: typeName)
         let isHosting = controller.isLightSessionHostingController
 
+        switch roleOfObservedController(
+            isOnScreen: controller.isLightSessionOnScreen,
+            isContainer: controller.isLightSessionContainer,
+            isOwnedByApp: controller.isLightSessionOwnedByApp,
+            isHostingController: isHosting
+        ) {
+        case .offscreen, .container:
+            return
+
+        case .systemFurniture:
+            // Debug rather than info: on a screen with a text field this fires six times, and an SDK
+            // that shouts about doing the right thing is an SDK whose log nobody reads.
+            LightSessionLog.debug("\(name) belongs to the system, not to the app; not a screen")
+            return
+
+        case .unnamedSwiftUIHost:
+            // Every SwiftUI screen in the app lands here, under one of a handful of mangled generic
+            // names that stand for the same container. Collapsed onto one node so the map says
+            // "unnamed" once instead of inventing a navigation every time SwiftUI changes which
+            // container holds the screen.
+            adviseSwiftUIIsUnnamed(host: name, mappedTo: unnamedSwiftUIScreenName)
+            enter(screen: unnamedSwiftUIScreenName, kind: .swiftUI, transition: "appear")
+            return
+
+        case .screen:
+            break
+        }
+
         switch actionForObservedController(
             isHostingController: isHosting,
             hostHasReportedAScreen: hostHasReported
@@ -143,7 +171,7 @@ final class ScreenTracker {
                     return
                 }
                 self.enter(screen: name, kind: .uiKit, transition: "appear")
-                self.adviseSwiftUIIsUnnamed(name)
+                self.adviseSwiftUIIsUnnamed(host: name, mappedTo: name)
             }
         }
     }
@@ -155,15 +183,21 @@ final class ScreenTracker {
     /// using. Advice that is wrong about what the app is doing teaches people to skip the SDK's output.
     ///
     /// Said once, and specifically. "Something may be wrong" is a message people learn to ignore; this
-    /// one names the type it found and the call that fixes it.
-    private func adviseSwiftUIIsUnnamed(_ name: String) {
+    /// one names the type it found, the single node everything is collapsing onto, and the call that
+    /// fixes it.
+    ///
+    /// - Parameters:
+    ///   - host: the hosting controller that was seen.
+    ///   - mappedTo: the one node the app's screens are all landing on, which is the host's own name
+    ///     when the app subclassed it and a placeholder when the class belongs to SwiftUI.
+    private func adviseSwiftUIIsUnnamed(host: String, mappedTo node: String) {
         guard !adviceGiven else { return }
         adviceGiven = true
         LightSessionLog.info(
             """
-            \(name) hosts SwiftUI, and it is the only screen the platform can name — every SwiftUI screen \
-            in it maps to this one node. Add `.lightSessionScreen("Name")` to each screen and set \
-            `screensReportedByHost: true`.
+            \(host) hosts SwiftUI, and the platform cannot name what is inside it — every SwiftUI screen \
+            in this app is being mapped to the single node "\(node)". Add `.lightSessionScreen("Name")` \
+            to each screen and set `screensReportedByHost: true`.
             """
         )
     }
@@ -265,8 +299,9 @@ final class ScreenTracker {
 
         settle.await(
             contentCount: {
-                guard let root = window.rootViewController?.view else { return 0 }
-                return SkeletonBuilder.contentCount(root.lightSessionSnapshot(in: window))
+                // The window, so a modal's content counts towards "has this settled" too. A sheet
+                // sliding in over an empty screen is content arriving.
+                SkeletonBuilder.contentCount(window.lightSessionContent)
             },
             onSettled: { [weak self] settled in
                 guard let self else { return }
@@ -297,9 +332,9 @@ final class ScreenTracker {
     }
 
     private func upload(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
-        guard let root = window.rootViewController?.view else { return }
-
-        let snapshot = root.lightSessionSnapshot(in: window)
+        // From the window: a screen that *is* a modal lives outside the root view. See
+        // `UIWindow.lightSessionContent`.
+        let snapshot = window.lightSessionContent
         let scale = Double(window.screen.scale)
         guard let frame = SkeletonBuilder.build(
             root: snapshot,
@@ -405,8 +440,7 @@ final class ScreenTracker {
 
     /// Renders and uploads the screenshot, reading the screen as it is now.
     private func captureScreenshot(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
-        guard let root = window.rootViewController?.view else { return }
-        let snapshot = root.lightSessionSnapshot(in: window)
+        let snapshot = window.lightSessionContent
         guard let frame = SkeletonBuilder.build(
             root: snapshot,
             scale: Double(window.screen.scale),

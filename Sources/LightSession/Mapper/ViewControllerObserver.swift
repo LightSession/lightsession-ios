@@ -16,9 +16,13 @@ import UIKit
 /// **It is installed exactly once**, guarded by a flag rather than by hoping. Swizzling twice swaps the
 /// implementations back and produces infinite recursion the first time a screen appears.
 ///
-/// **Controllers that are not screens are filtered here**, not by the tracker. `UIAlertController`,
-/// navigation and tab containers, and Apple's private wrappers all call `viewDidAppear`; reporting them
-/// would fill the map with nodes no user could name.
+/// **Nothing is filtered here.** This used to drop the controllers that are not screens before the
+/// tracker saw them, and the comment saying so was the only place the filtering was described — it
+/// listed "Apple's private wrappers" among what it rejected, and the code rejected five container
+/// classes and nothing else. What arrived in the map was UIKit's keyboard, one screen per part of it.
+/// Deciding in one place, in `roleOfObservedController`, is what makes the rule readable and testable;
+/// and one of the outcomes is not "ignore this" but "tell the developer their SwiftUI app is unnamed",
+/// which is the tracker's to say because only the tracker knows whether the app has spoken.
 final class ViewControllerObserver {
 
     /// Called with the controller that appeared, on the main thread.
@@ -55,7 +59,6 @@ extension UIViewController {
         // The implementations are exchanged, so this call reaches the original.
         lightSession_viewDidAppear(animated)
 
-        guard ViewControllerObserver.onAppear != nil, isLightSessionScreen else { return }
         ViewControllerObserver.onAppear?(self)
     }
 
@@ -80,23 +83,65 @@ extension UIViewController {
         return false
     }
 
-    /// Whether this controller is a place in the app, as opposed to a container or a system control.
+    /// Whether this controller frames a screen rather than being one.
     ///
     /// A container's `viewDidAppear` fires alongside its child's, and the child is the screen. Alerts
     /// and action sheets are parts of the screen that presented them, which is what the sub-screen
     /// mechanism is for — the tracker names them `Parent › Alert` rather than as screens of their own.
-    var isLightSessionScreen: Bool {
-        if self is UINavigationController { return false }
-        if self is UITabBarController { return false }
-        if self is UISplitViewController { return false }
-        if self is UIPageViewController { return false }
-        if self is UIAlertController { return false }
+    var isLightSessionContainer: Bool {
+        self is UINavigationController
+            || self is UITabBarController
+            || self is UISplitViewController
+            || self is UIPageViewController
+            || self is UIAlertController
+    }
 
-        // A controller with no window is not on screen. This happens: `viewDidAppear` fires for a
-        // controller being torn down in the same run loop turn its window went away.
-        guard view.window != nil else { return false }
+    /// Whether the user can see this. `viewDidAppear` fires for a controller being torn down in the
+    /// same run loop turn its window went away.
+    var isLightSessionOnScreen: Bool {
+        view.window != nil
+    }
 
-        return true
+    /// Whether this controller's class is the app's own code.
+    ///
+    /// The question a screen map actually wants to ask, and the one that was never asked. Every
+    /// `UIViewController` in the process passes through the hook — UIKit's, Safari's, the app's — and
+    /// only the app has screens. A measured session against a real app mapped
+    /// `UIPredictionViewController`, `UISystemInputAssistantViewController` and
+    /// `_SFAppPasswordSavingViewController` as places the user had navigated to, because a text field
+    /// had been tapped.
+    ///
+    /// `Bundle(for:)` answers it. It resolves a class to the bundle its code was loaded from, which for
+    /// UIKit is `UIKitCore.framework` and for the app is the app. The `Foundation` documentation warns
+    /// that it falls back to the main bundle for a class it cannot place, which would have made this
+    /// silently useless — it was measured rather than assumed, and framework classes do resolve to
+    /// their framework, including ones that come from the shared cache.
+    ///
+    /// Frameworks the app ships inside itself count as the app's, which is what a modular codebase
+    /// needs: a screen in `Feature.framework` is still a screen.
+    ///
+    /// One thing is knowingly given up. A screen the *system* draws for the app — `SFSafariViewController`
+    /// is the honest example — is no longer mapped. It is Apple's screen, rendered in another process,
+    /// and the SDK could never see inside it anyway; an app that wants it in the graph can name it with
+    /// `LightSession.setScreen(_:)`. That is a smaller loss than a map that cannot survive a keyboard.
+    var isLightSessionOwnedByApp: Bool {
+        Bundle(for: type(of: self)).isLightSessionInsideApp
+    }
+}
+
+extension Bundle {
+
+    /// Where the app itself lives, resolved once. Symlinks are resolved because the simulator's
+    /// container paths go through several of them and two spellings of one directory would not match.
+    private static let lightSessionAppPath: String =
+        Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
+
+    /// Whether this bundle ships inside the app bundle.
+    var isLightSessionInsideApp: Bool {
+        isPathInsideApp(
+            bundleURL.resolvingSymlinksInPath().standardizedFileURL.path,
+            appPath: Bundle.lightSessionAppPath
+        )
     }
 }
 #endif

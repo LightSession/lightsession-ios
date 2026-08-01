@@ -182,8 +182,7 @@ final class FrameRecorder {
         // The same renderer the screen map uses, so a view the wireframe calls text is a view this covers.
         // One classification, three outputs; the alternative is lists that drift, and the one that drifts is
         // the one that stops covering something.
-        let snapshot = window.rootViewController?.view?.lightSessionSnapshot(in: window)
-            ?? window.lightSessionSnapshot(in: window)
+        let snapshot = window.lightSessionContent
         guard let bitmap = ScreenshotRenderer.capture(
             window: window,
             snapshot: snapshot,

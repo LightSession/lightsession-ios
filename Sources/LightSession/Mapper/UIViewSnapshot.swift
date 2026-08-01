@@ -153,4 +153,28 @@ extension UIWindow {
 /// Marks a view as walked in its own right, so `LayerContent` leaves its layer alone. Without this the
 /// mask of every UIKit view would be emitted twice: once for the view, once for the layer behind it.
 extension UIView: UIViewLike {}
+
+extension UIWindow {
+
+    /// Everything on screen, which is the window and not its root view.
+    ///
+    /// The difference is a modal. A presented view controller's view is **not** a descendant of the
+    /// presenting controller's view — UIKit installs it in a container of its own under the window —
+    /// so a walk that starts at `rootViewController.view` never reaches a sheet, an alert or a
+    /// full-screen cover, and never classifies a word inside one.
+    ///
+    /// That was not a missing feature, it was a leak. The pixels come from `drawHierarchy` on the
+    /// *window*, which draws the modal whether or not anything described it, while the masks came
+    /// from the screen underneath. Measured on a stored capture of a sheet: its heading, its
+    /// paragraph and its button were legible, with a single grey block over them belonging to the
+    /// navigation bar of the screen behind. A screenshot that leaves the device with text in it has
+    /// left the device with text in it, whatever the next step does.
+    ///
+    /// Starting here also fixes the second half of what that looked like. With the sheet in the
+    /// snapshot, its own opaque background is an opaque cover, so `CoveredContent` discards the
+    /// rectangles of the screen it hides instead of drawing them on top of it.
+    var lightSessionContent: ViewSnapshot {
+        lightSessionSnapshot(in: self)
+    }
+}
 #endif
