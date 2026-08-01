@@ -177,6 +177,128 @@ public func nameForSwiftUIHost(
     return .title(title)
 }
 
+// MARK: - The screen a SwiftUI app cannot name by itself
+//
+// Read this before trying again. It is not a list of opinions; every line was measured on a device,
+// and most of the dead ends took two attempts because the first instrument was wrong.
+//
+// ## The problem
+//
+// A root that swaps its content — `WindowGroup { RootView() }` with `switch session.route` inside —
+// shows Splash, then Login, then the signed-in app. To UIKit those are not three screens. They are one
+// hosting controller whose content changed. Measured, with object identity printed on both sides:
+//
+//     before:  UIHostingController<RootView>#5604
+//              route: splash -> login
+//     after:   UIHostingController<RootView>#5604
+//     viewWillAppear: none · viewDidAppear: none · no callback of any kind
+//
+// So there is no moment to hang a name on, and no name to hang.
+//
+// ## What was tried, and where each one ends
+//
+//  1. **The class's generic parameter.** `UIHostingController<LoginView>` really does carry the type,
+//     and it is read where it survives. SwiftUI erases it in both cases that matter: a `NavigationStack`
+//     hands destinations over as `AnyView`, and a `WindowGroup` root arrives as
+//     `ModifiedContent<AnyView, RootModifier>`.
+//
+//  2. **`rootView` through `Mirror`.** Absent: a `NavigationStackHostingController` has two stored
+//     properties, `navigationColumnContext` and `pendingContent`, and no root view at all.
+//
+//  3. **`pendingContent`.** Nil once the content is installed.
+//
+//  4. **An exhaustive walk of the object graph** from the controller, its view and its ancestors.
+//     Finds the *root* view type and nothing else — the pushed destination is in none of the 1,357
+//     nodes reachable.
+//
+//  5. **Objective-C ivars instead of `Mirror`.** This one gets furthest and is worth knowing about: it
+//     reaches SwiftUI's live navigation state at
+//     `_delegate.navigationAuthority.host.navigationState.stackStateByKey`, with `pathLength` and a
+//     position-to-controller map. The pushed values, though, come back empty — `_value` on the binding
+//     is a cache, and the live path is behind `StoredLocation` → `GraphHost` → `AGAttribute(17944)`.
+//
+//  6. **`_UIHostingView._viewDebugData()`**, the entry point Xcode's view debugger uses. It is in the
+//     public interface and it links and runs: it returns **zero nodes in 0.0 ms**. Capture is gated by
+//     internal state with no exported setter.
+//
+//  7. **The Objective-C protocol behind that**, `XcodeViewDebugDataProvider`, with the selectors
+//     `makeViewDebugData` and `_childDebugData`. The hosting view conforms and responds;
+//     `makeViewDebugData` returns **two bytes**, an empty payload. Xcode enables capture from outside
+//     the process, through the debug server.
+//
+//  8. **Named reflection paths into the hosting controller**, the technique other tools in this space
+//     use — `host`, `_rootView`, `storage`, `view`, `content`. The root path works. On this OS the
+//     NavigationStack paths resolve to nothing, because that class has no `host` and no `_rootView`.
+//
+//  9. **Evaluating `body` ourselves.** The closest miss. Swift's implicit existential opening lets an
+//     SDK read `.body` at a concrete type it cannot name, and the walk correctly resolved
+//     `Group` → `_ConditionalContent` → `SplashScreenDemo`. It is still wrong: the root view the
+//     controller holds is the original value, with `@State._location == nil`, so the body replays the
+//     seed. After switching to login it still answered Splash. A confidently wrong name is worse than
+//     none.
+//
+// 10. **The view graph itself**, at `host._base`. It holds `viewGraph.rootViewType` — the root type,
+//     again — and the same unbound seed copy. Zero `_ConditionalContent` values in 1,118 nodes.
+//
+// ## Why they all end in the same place
+//
+// What SwiftUI renders is decided by state kept in AttributeGraph, a C++ engine whose nodes are
+// addressed by numeric ids rather than by fields any reflection can enumerate. Reading it would mean
+// calling undocumented C internals, by id, inside somebody else's app, with no contract across
+// releases — and tripping the graph's invariants there is a crash in a customer's app, not a missing
+// feature in ours.
+//
+// ## What to try if you come back to this
+//
+//  * A public API from Apple that names the rendered view. None exists as of iOS 26.
+//  * A compiler plugin or macro the app opts into, which would see the concrete types at build time.
+//    This trades one line of runtime annotation for a build-time dependency; worth measuring, not
+//    obviously better.
+//  * Detecting the *change* without naming it. The mapper already re-describes the screen on a timer,
+//    so a structural fingerprint would notice Splash becoming Login. It cannot name either of them,
+//    and two nodes called "screen 1" and "screen 2" are worse than one honest annotation.
+//
+// Until one of those lands, the app tells us — and the app's own routing value is not a consolation
+// prize. It is the better name: `.login` is what the team calls that screen, and it survives renaming
+// the view that draws it.
+
+/// The screen name for a value an app routes on.
+///
+/// The last thing tried, after everything else, and the only one that is not archaeology. Ten attempts
+/// went looking for *which view is on screen* — through the hosting controller's generic parameter, its
+/// `rootView`, an exhaustive walk of the object graph, the Objective-C ivars that reach SwiftUI's
+/// navigation state, the debug data Xcode's view debugger reads, and finally evaluating `body` to follow
+/// the live branch of a `switch`. Every one of them ends at the same wall: what SwiftUI renders is
+/// decided by state that lives in AttributeGraph, a C++ engine addressed by numeric ids, and a root that
+/// swaps `Splash` for `Login` emits no UIKit event at all.
+///
+/// The app knows, though — not in a view, in its own model. `switch session.route` is the answer written
+/// by the people who wrote the app, and it is a better name than any view type: it is the concept, not
+/// the rendering of it.
+///
+/// So the name is taken from the routing value:
+///
+///  * an **enum with a payload** gives its case name and drops the payload. `.doctorDetail(id)` is one
+///    screen, not one per doctor — the same reason a title built from a record is refused elsewhere.
+///  * anything else is described as written.
+///
+/// Nothing is capitalised or prettified. An app that routes on `.login` gets `login`, because a name the
+/// SDK invents is a name nobody can search for in their own source.
+public func screenName(forRoute value: Any) -> String? {
+    let mirror = Mirror(reflecting: value)
+    if mirror.displayStyle == .enum, let label = mirror.children.first?.label {
+        return label.trimmed()
+    }
+    return String(describing: value).trimmed()
+}
+
+private extension String {
+    func trimmed() -> String? {
+        let clean = trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty ? nil : clean
+    }
+}
+
 /// The one node an unnamed SwiftUI app is mapped to.
 ///
 /// Not the hosting controller's class name, which is what produced the bug this exists to answer: a

@@ -331,6 +331,17 @@ final class ScreenTracker {
             // still describes it more truthfully, as a part of the screen that opened it.
             LightSessionLog.debug("an untitled sheet over \(lastReported ?? "?") is not a screen")
 
+        case .placeholder where hostHasReported:
+            // No title, and the app names its own screens: this is the box they are drawn in, not a
+            // screen. Checked here and not before reading the title, which is the mistake that shipped
+            // once — an app naming its routes lost every screen the title would have named, because a
+            // titled `NavigationStackHostingController` was being dropped along with the untitled ones.
+            //
+            // Checked outside the grace as well, because the app may have reported *before* the wait
+            // began: `.lightSessionScreen(for:)` on a routed root fires at launch, and the pending
+            // fallback put a placeholder node between `loading` and `login`.
+            LightSessionLog.debug("\(container) is the box the app's SwiftUI screens are drawn in; not a screen")
+
         case .placeholder:
             adviseSwiftUIIsUnnamed(host: container, mappedTo: unnamedSwiftUIScreenName)
             enter(screen: unnamedSwiftUIScreenName, kind: .swiftUI, transition: "appear")

@@ -275,6 +275,55 @@ final class SwiftUIHostNamingTests: XCTestCase {
     }
 }
 
+/// Naming a screen from the value the app routes on.
+///
+/// The last resort and the best one, after ten attempts to read the answer out of SwiftUI's internals.
+/// The app's own routing value is not a workaround for those failures — it is a better name than any of
+/// them would have produced, because it is what the team calls the screen rather than what the framework
+/// happens to be rendering.
+final class RouteScreenNameTests: XCTestCase {
+
+    private enum Route: Equatable {
+        case loading
+        case login
+        case doctorDetail(String)
+        case editDoctor(id: String, draft: Bool)
+    }
+
+    func testAPlainCaseIsItsOwnName() {
+        XCTAssertEqual(screenName(forRoute: Route.login), "login")
+        XCTAssertEqual(screenName(forRoute: Route.loading), "loading")
+    }
+
+    /// The payload is dropped, for the same reason a title built from a record is refused: one screen,
+    /// not one node per doctor.
+    func testAPayloadIsNotPartOfTheName() {
+        XCTAssertEqual(screenName(forRoute: Route.doctorDetail("dr-carlos")), "doctorDetail")
+        XCTAssertEqual(screenName(forRoute: Route.doctorDetail("dra-ana")), "doctorDetail")
+        XCTAssertEqual(
+            screenName(forRoute: Route.editDoctor(id: "x", draft: true)),
+            "editDoctor",
+            "a labelled payload is still a payload"
+        )
+    }
+
+    /// Not every app routes on an enum.
+    func testOtherValuesAreDescribedAsWritten() {
+        XCTAssertEqual(screenName(forRoute: "Checkout"), "Checkout")
+        XCTAssertEqual(screenName(forRoute: 7), "7")
+    }
+
+    /// Nothing is capitalised or tidied. A name the SDK invents is a name nobody can grep for in their
+    /// own source.
+    func testTheNameIsNotPrettified() {
+        XCTAssertEqual(screenName(forRoute: Route.login), "login", "not Login")
+    }
+
+    func testEmptyIsNotAName() {
+        XCTAssertNil(screenName(forRoute: "   "))
+    }
+}
+
 /// Where a class's code has to live to count as the app's.
 final class AppOwnershipPathTests: XCTestCase {
 
