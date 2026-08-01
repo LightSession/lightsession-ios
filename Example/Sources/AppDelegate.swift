@@ -98,8 +98,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 guard let navigation = self?.navigation else { return }
                 if slug == "back" {
                     navigation.popViewController(animated: true)
-                } else if let destination = HubViewController.route(named: slug) {
-                    navigation.pushViewController(destination, animated: true)
+                } else if let route = HubViewController.route(named: slug),
+                          let hub = navigation.viewControllers.first as? HubViewController {
+                    // Through the hub, so a route that must be presented rather than pushed is shown
+                    // the same way from a script as from a tap.
+                    navigation.popToRootViewController(animated: false)
+                    hub.presentedViewController?.dismiss(animated: false)
+                    hub.show(route)
                 } else {
                     print("[demo] no route named \(slug)")
                 }

@@ -16,45 +16,111 @@ import LightSession
 /// The last one is the honest case: the platform cannot name a SwiftUI screen, so the app does.
 final class HubViewController: UIViewController {
 
-    /// The routes, each with the slug the URL scheme uses. One list, so a screen reachable by tapping is
-    /// reachable by script and the driver cannot drift from the app.
-    static let routes: [(slug: String, title: String, make: () -> UIViewController)] = [
-        ("pushed", "Pushed controller", { PushedViewController() }),
-        ("form", "Form with text fields", { FormViewController() }),
-        ("list", "Table of rows", { ListViewController() }),
-        ("tabs", "Tab bar", { TabsViewController() }),
-        ("swiftui", "SwiftUI screens", { SwiftUIHostViewController() }),
-        // A *plain* `UIHostingController`, which is what a SwiftUI app that never touched UIKit has.
-        // The class belongs to SwiftUI rather than to the app, and its name is a mangled generic that
-        // changes with the iOS release — so this is the one route the SDK is expected to refuse to name.
-        ("unnamed", "SwiftUI with no name", { UIHostingController(rootView: UnnamedSwiftUIScreen()) }),
-        // Tabs and a navigation stack, every screen named by the app. Run it with
-        // `-demoHostNamesScreens 1 -demoNav 1`, which is the configuration a SwiftUI app ships.
-        // The shape a real SwiftUI app has and the one this feature is for: a NavigationStack whose
-        // screens carry `.navigationTitle` and nothing else. No `.lightSessionScreen` anywhere — the
-        // SDK is expected to read the titles the app already wrote for its users.
-        ("titled", "A stack with titles and no annotations", {
-            guard #available(iOS 16.0, *) else { return UIViewController() }
-            return UIHostingController(rootView: TitledScreens())
-        }),
-        // A root that swaps its content, named by the app's route in one line. The shape that emits
-        // no UIKit event at all.
-        ("routed", "A root switch, named by its route", {
-            guard #available(iOS 16.0, *) else { return UIViewController() }
-            return UIHostingController(rootView: RoutedRootScreens())
-        }),
-        ("sheetreturn", "A sheet, and what comes after it", {
-            guard #available(iOS 16.0, *) else { return UIViewController() }
-            return UIHostingController(rootView: SheetReturnScreens())
-        }),
-        ("hostnamed", "Tabs and a stack, named", {
-            guard #available(iOS 16.0, *) else { return UIViewController() }
-            return UIHostingController(rootView: HostNamedScreens())
-        }),
+    /// One entry in the catalogue.
+    ///
+    /// `presented` exists because a `UISplitViewController` cannot be pushed onto a navigation stack —
+    /// measured, it lays out nothing at all and the SDK sees no screen, which looks like a bug in the
+    /// SDK and is a bug in the sample. A route says how it wants to be shown.
+    struct Route {
+        let slug: String
+        let title: String
+        let make: () -> UIViewController
+        var presented: Bool = false
+
+        init(_ slug: String, _ title: String, _ make: @escaping () -> UIViewController, presented: Bool = false) {
+            self.slug = slug
+            self.title = title
+            self.make = make
+            self.presented = presented
+        }
+    }
+
+    /// Shows a route the way that route needs to be shown.
+    func show(_ route: Route) {
+        let destination = route.make()
+        if route.presented {
+            destination.modalPresentationStyle = .fullScreen
+            present(destination, animated: true)
+        } else {
+            navigationController?.pushViewController(destination, animated: true)
+        }
+    }
+
+    /// Every shape of screen and navigation this SDK has to read, each reachable by a slug so the
+    /// same list drives a tap and a script.
+    ///
+    /// Grouped by the question each one asks, because the list is long enough that a flat catalogue
+    /// stops being readable — and because the groups *are* the taxonomy: what a screen is made of,
+    /// what merely contains one, what covers one, and what happens when nobody names anything.
+    static let sections: [(title: String, routes: [Route])] = [
+        ("UIKit content", [
+            Route("pushed", "Pushed controller", { PushedViewController() }),
+            Route("form", "Form with text fields", { FormViewController() }),
+            Route("list", "Table of rows", { ListViewController() }),
+            // `NodeKind.webView` existed and nothing produced one. A web view is also the one thing the
+            // SDK cannot describe from inside: the page is another process.
+            Route("web", "Web view", { WebViewScreen() }),
+        ]),
+
+        // Four controllers that hold screens without being one. All four call `viewDidAppear` next to
+        // the screen they contain, and all four must be dropped.
+        ("Containers, which are not screens", [
+            Route("tabs", "Tab bar", { TabsViewController() }),
+            Route("split", "Split view", { SplitViewScreens() }, presented: true),
+            Route("paged", "Page view controller", { PagedScreens() }),
+            Route("container", "A container the app wrote", { CustomContainerScreens() }),
+        ]),
+
+        // Three ways of covering a screen that behave differently underneath — see ModalScreens.
+        ("Things that cover a screen", [
+            Route("alert", "An alert over a screen", { AlertOverScreen() }),
+            Route("fullmodal", "A full-screen modal", { FullScreenModalHost() }),
+            Route("covers", "Sheet, cover and dialog", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: CoversScreens())
+            }),
+            Route("sheetreturn", "A sheet, and what comes after it", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: SheetReturnScreens())
+            }),
+        ]),
+
+        ("SwiftUI, named by the app", [
+            Route("swiftui", "Named, with a sheet as a sub-screen", { SwiftUIHostViewController() }),
+            // Tabs and a stack, every screen named. Run with `-demoHostNamesScreens 1 -demoNav 1`.
+            Route("hostnamed", "Tabs and a stack, named", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: HostNamedScreens())
+            }),
+            // A root that swaps its content: the one shape that emits no UIKit event at all.
+            Route("routed", "A root switch, named by its route", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: RoutedRootScreens())
+            }),
+        ]),
+
+        ("SwiftUI, naming itself or not at all", [
+            // Titles only, no annotations: what the SDK reads from an app that changed nothing.
+            Route("titled", "A stack with titles and no annotations", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: TitledScreens())
+            }),
+            // A plain `UIHostingController`: the class belongs to SwiftUI, and its name is a mangled
+            // generic. The one route the SDK is expected to refuse to name.
+            Route("unnamed", "SwiftUI with no name", { UIHostingController(rootView: UnnamedSwiftUIScreen()) }),
+            // The integration deliberately missing, so the failure mode can be looked at.
+            Route("untracked", "Navigation with nothing to name it", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: UntrackedNavigationScreens())
+            }),
+        ]),
     ]
 
-    static func route(named slug: String) -> UIViewController? {
-        routes.first { $0.slug == slug }?.make()
+    /// Flattened, for the driver and for `route(named:)`.
+    static let routes: [Route] = sections.flatMap(\.routes)
+
+    static func route(named slug: String) -> Route? {
+        routes.first { $0.slug == slug }
     }
 
     override func viewDidLoad() {
@@ -73,25 +139,42 @@ final class HubViewController: UIViewController {
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        for route in Self.routes {
-            let button = UIButton(type: .system)
-            button.setTitle(route.title, for: .normal)
-            button.contentHorizontalAlignment = .leading
-            button.titleLabel?.font = .preferredFont(forTextStyle: .body)
-            button.addAction(
-                UIAction { [weak self] _ in
-                    self?.navigationController?.pushViewController(route.make(), animated: true)
-                },
-                for: .touchUpInside
-            )
-            stack.addArrangedSubview(button)
+        for section in Self.sections {
+            let heading = UILabel()
+            heading.text = section.title.uppercased()
+            heading.font = .preferredFont(forTextStyle: .caption1)
+            heading.textColor = .tertiaryLabel
+            stack.addArrangedSubview(heading)
+            stack.setCustomSpacing(4, after: heading)
+
+            for route in section.routes {
+                let button = UIButton(type: .system)
+                button.setTitle(route.title, for: .normal)
+                button.contentHorizontalAlignment = .leading
+                button.titleLabel?.font = .preferredFont(forTextStyle: .body)
+                button.addAction(
+                    UIAction { [weak self] _ in self?.show(route) },
+                    for: .touchUpInside
+                )
+                stack.addArrangedSubview(button)
+            }
+            stack.setCustomSpacing(20, after: stack.arrangedSubviews.last!)
         }
 
-        view.addSubview(stack)
+        // Scrollable, because the catalogue outgrew the screen the day it became a catalogue.
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(stack)
+        view.addSubview(scroll)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -20),
         ])
     }
 }
