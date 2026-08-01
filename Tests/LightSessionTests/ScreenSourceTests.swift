@@ -205,6 +205,76 @@ final class ObservedControllerRoleTests: XCTestCase {
     }
 }
 
+/// What a SwiftUI screen is called when the app has not called it anything.
+///
+/// The measurement behind this: a real app's twenty-one screens, of which nineteen already had a
+/// `.navigationTitle` written for the user — "Roteiro", "Painel", "Cobertura" — and two did not.
+/// Reading them is the difference between integrating in one line and integrating in one line per
+/// screen. The two that did not, plus the two whose titles are built from a record, are what the rest
+/// of these tests are about.
+final class SwiftUIHostNamingTests: XCTestCase {
+
+    private let naming = SwiftUITitleNaming(limit: 3)
+
+    func testATitleIsTheName() {
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: "Roteiro", alreadyNamed: 0, naming: naming),
+            .title("Roteiro")
+        )
+    }
+
+    func testNoTitleIsThePlaceholder() {
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: nil, alreadyNamed: 0, naming: naming),
+            .placeholder
+        )
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: "", alreadyNamed: 0, naming: naming),
+            .placeholder,
+            "an empty title says as little as no title"
+        )
+    }
+
+    /// Turning it off has to go back to the old behaviour exactly, not to a quieter version of the new
+    /// one: an app that switched this off because its titles are translated must not find some of them
+    /// in the map anyway.
+    func testTurningItOffReadsNoTitleAtAll() {
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: "Roteiro", alreadyNamed: 0, naming: nil),
+            .placeholder
+        )
+    }
+
+    /// `.navigationTitle(doctor.name)` is a node per doctor. The limit is the backstop.
+    func testTooManyDistinctTitlesStopsBeingBelieved() {
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: "Dr. Ana", alreadyNamed: 2, naming: naming),
+            .title("Dr. Ana"),
+            "still under the limit"
+        )
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: "Dr. Bruno", alreadyNamed: 3, naming: naming),
+            .tooManyTitles,
+            "the limit counts titles already accepted, so at it the next new one is one too many"
+        )
+    }
+
+    /// The screens named before the limit was hit keep their names. Falling back for *everything*
+    /// would throw away the nineteen that were right to punish the two that were not.
+    func testTheLimitOnlyAffectsWhatComesAfterIt() {
+        let underTheLimit = nameForSwiftUIHost(title: "Painel", alreadyNamed: 1, naming: naming)
+        XCTAssertEqual(underTheLimit, .title("Painel"))
+    }
+
+    func testAnAppWithoutTitlesIsUnaffectedByTheLimit() {
+        XCTAssertEqual(
+            nameForSwiftUIHost(title: nil, alreadyNamed: 99, naming: naming),
+            .placeholder,
+            "no title is no title, however many other screens have one"
+        )
+    }
+}
+
 /// Where a class's code has to live to count as the app's.
 final class AppOwnershipPathTests: XCTestCase {
 

@@ -28,6 +28,9 @@ final class ViewControllerObserver {
     /// Called with the controller that appeared, on the main thread.
     static var onAppear: ((UIViewController) -> Void)?
 
+    /// Called before the transition, so a title can be read before the screen's data replaces it.
+    static var onWillAppear: ((UIViewController) -> Void)?
+
     private static var installed = false
 
     static func install() {
@@ -36,6 +39,27 @@ final class ViewControllerObserver {
         installed = true
 
         let cls = UIViewController.self
+
+        // `viewWillAppear` as well as `viewDidAppear`, and the reason is a measurement.
+        //
+        // `viewDidAppear` fires when the push animation *finishes*, about 350 ms after it starts. A
+        // detail screen fetching from a backend on the same machine has its answer in 50 ms — so by
+        // the time the SDK is told the screen appeared, `.navigationTitle(doctor.name ?? "Médico")`
+        // already says `Dr. Carlos Mendes`, and the screen is named after a record. Reading it a
+        // moment earlier is not enough; the whole animation has to be beaten.
+        //
+        // `viewWillAppear` runs before the transition, with the title SwiftUI configured and the
+        // request still in flight. Nothing is reported from there — it only remembers what the screen
+        // called itself before it knew anything.
+        if let willAppear = class_getInstanceMethod(cls, #selector(UIViewController.viewWillAppear(_:))),
+           let replacement = class_getInstanceMethod(
+               cls, #selector(UIViewController.lightSession_viewWillAppear(_:))
+           ) {
+            method_exchangeImplementations(willAppear, replacement)
+        } else {
+            LightSessionLog.error("could not hook viewWillAppear; SwiftUI titles may name records")
+        }
+
         let original = #selector(UIViewController.viewDidAppear(_:))
         let replacement = #selector(UIViewController.lightSession_viewDidAppear(_:))
 
@@ -60,6 +84,11 @@ extension UIViewController {
         lightSession_viewDidAppear(animated)
 
         ViewControllerObserver.onAppear?(self)
+    }
+
+    @objc fileprivate func lightSession_viewWillAppear(_ animated: Bool) {
+        lightSession_viewWillAppear(animated)
+        ViewControllerObserver.onWillAppear?(self)
     }
 
     /// Whether this controller hosts SwiftUI content, including through a subclass of its own.
@@ -100,6 +129,31 @@ extension UIViewController {
     /// same run loop turn its window went away.
     var isLightSessionOnScreen: Bool {
         view.window != nil
+    }
+
+    /// Whether this was presented over something rather than navigated to.
+    ///
+    /// A pushed screen is a child of a navigation controller; a sheet, an alert or a cover is
+    /// *presented*, and `presentingViewController` is the difference. It matters because an untitled
+    /// sheet is not an unnamed screen — it is not a screen.
+    var isLightSessionPresentedModally: Bool {
+        presentingViewController != nil
+    }
+
+    /// The title on this screen, as the user reads it.
+    ///
+    /// `navigationItem.title` first and `title` second, which is the order that matters rather than a
+    /// preference: setting `title` also sets `navigationItem.title`, but a screen can set the
+    /// navigation item alone — SwiftUI's `.navigationTitle` does exactly that — and reading `title`
+    /// first would come back empty for every SwiftUI screen there is.
+    var lightSessionTitle: String? {
+        for candidate in [navigationItem.title, title] {
+            if let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return nil
     }
 
     /// Whether this controller's class is the app's own code.

@@ -116,6 +116,67 @@ public func isPathInsideApp(_ bundlePath: String, appPath: String) -> Bool {
     bundlePath == appPath || bundlePath.hasPrefix(appPath + "/")
 }
 
+/// What to call a SwiftUI screen the app has not named.
+///
+/// The title, when there is one. `NavigationStack` runs on a real `UINavigationController`, so
+/// `.navigationTitle("Roteiro")` ends up as an ordinary `navigationItem.title` on a hosting controller
+/// of its own — measured, not assumed: pushing a screen moved the title from `Inbox` to `Message` on
+/// both the bar and the controller. That makes it a screen name the SDK can read from an app that
+/// changed nothing, and a better one than the app would have typed: it is the word the user is
+/// looking at.
+///
+/// **Only where the class name is worthless.** A UIKit screen keeps its class name, which is stable,
+/// unlocalised and unique. A title is none of those, and swapping one for the other everywhere would
+/// trade a good identity for a pretty one.
+///
+/// Two ways this goes wrong, and both are real in apps already written:
+///
+///  * **A localised title is a localised node.** Translate the app and the map grows a second copy of
+///    every screen. Nothing here can fix that; `.lightSessionScreen` can.
+///  * **A title built from data is unbounded.** `.navigationTitle(doctor.name)` is a node per doctor,
+///    and a screen map with nine hundred nodes is not a screen map. That is what [limit] is for.
+public struct SwiftUITitleNaming: Equatable, Sendable {
+    /// How many distinct auto-named screens are allowed before the SDK stops trusting titles.
+    ///
+    /// Not a guess at how many screens an app has — a real one can have well over a hundred — but at
+    /// the point where "these are screens" stops being the likelier explanation than "this title is
+    /// built from a record". Past it, auto-naming turns itself off and says so; the screens already
+    /// mapped keep their names, because deleting them would lose the ones that were right.
+    public var limit: Int
+
+    public init(limit: Int = 150) {
+        self.limit = limit
+    }
+}
+
+/// What to name a SwiftUI hosting controller, given its title and what has been named so far.
+public enum SwiftUIHostName: Equatable, Sendable {
+    /// Use this name, read from the screen itself.
+    case title(String)
+    /// No title to read. The placeholder, and the advice that goes with it.
+    case placeholder
+    /// There was a title, and there have been too many distinct ones to keep believing them.
+    case tooManyTitles
+}
+
+/// Decides what an unnamed SwiftUI screen is called.
+///
+/// - Parameters:
+///   - title: the controller's title, already trimmed, or nil.
+///   - alreadyNamed: how many distinct titles have been accepted so far.
+///   - naming: the limit, or nil to never read titles at all.
+public func nameForSwiftUIHost(
+    title: String?,
+    alreadyNamed: Int,
+    naming: SwiftUITitleNaming?
+) -> SwiftUIHostName {
+    guard let naming, let title, !title.isEmpty else { return .placeholder }
+    // `>=` rather than `>`: the count is of titles already accepted, so at the limit the next new one
+    // is the one too many.
+    guard alreadyNamed < naming.limit else { return .tooManyTitles }
+    return .title(title)
+}
+
 /// The one node an unnamed SwiftUI app is mapped to.
 ///
 /// Not the hosting controller's class name, which is what produced the bug this exists to answer: a

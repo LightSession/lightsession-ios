@@ -52,6 +52,21 @@ public struct LightSessionConfig: Sendable {
     /// own, so it says so in the log rather than mapping nothing in silence.
     public var screensReportedByHost: Bool
 
+    /// Whether a SwiftUI screen with no name of its own is named after its navigation title.
+    ///
+    /// On by default, because it is the difference between an app integrating in one line and an app
+    /// integrating in one line per screen. A SwiftUI `.navigationTitle` becomes a real
+    /// `navigationItem.title` on a hosting controller of its own, so an app that wrote titles for its
+    /// users has already named its screens for the SDK — and named them better, in the words the user
+    /// is reading rather than the ones a developer typed into a route table.
+    ///
+    /// Set it to nil to turn that off and go back to naming SwiftUI screens only through
+    /// `.lightSessionScreen(_:)`. Worth doing when titles are translated and the map has to be one map
+    /// across locales, or when they are built from data — see `SwiftUITitleNaming.limit`, which is the
+    /// backstop for the second case rather than a cure.
+    public var swiftUITitleNaming: SwiftUITitleNaming?
+
+
     /// What kind of screen a host-reported name describes.
     ///
     /// `setScreen(_:)` is one call with two callers — a SwiftUI app and a React Native app — and neither the
@@ -76,6 +91,7 @@ public struct LightSessionConfig: Sendable {
         apiURL: String,
         ingestURL: String? = nil,
         screensReportedByHost: Bool = false,
+        swiftUITitleNaming: SwiftUITitleNaming? = SwiftUITitleNaming(),
         reportedScreenKind: ScreenIdentity.Kind = .swiftUI,
         captureRealScreens: Bool = true,
         maskText: Bool = true,
@@ -90,6 +106,7 @@ public struct LightSessionConfig: Sendable {
         self.apiURL = apiURL
         self.ingestURL = ingestURL
         self.screensReportedByHost = screensReportedByHost
+        self.swiftUITitleNaming = swiftUITitleNaming
         self.reportedScreenKind = reportedScreenKind
         self.captureRealScreens = captureRealScreens
         self.maskText = maskText

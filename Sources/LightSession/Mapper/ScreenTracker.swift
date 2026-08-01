@@ -35,6 +35,41 @@ final class ScreenTracker {
     /// while it was waiting. A boolean would not: the app may have reported *before* the wait began.
     private var hostReportCount = 0
     private var adviceGiven = false
+    /// The distinct titles auto-naming has accepted, which is what the limit is counted against.
+    private var titlesSeen: Set<String> = []
+    private var titleLimitReported = false
+    /// Bumped whenever any screen is reported, by any source.
+    ///
+    /// Distinct from `hostReportCount`, which counts only what the *app* said. A SwiftUI screen's real
+    /// name can now also arrive from a controller deeper in the tree — a `NavigationStack` inside a
+    /// hosting controller is three or four nested controllers and only the innermost has the title,
+    /// with the outer ones appearing first. This is what lets an outer one's pending fallback notice
+    /// that the screen has since been named properly and stay quiet.
+    private var screenReportCount = 0
+    /// The name each hosting controller was given the first time it was seen.
+    ///
+    /// Weak keys, so remembering a name never keeps a screen alive.
+    ///
+    /// This is what stops a title that is really data from becoming a node per record. A doctor detail
+    /// screen written as `.navigationTitle(doctor.name ?? "Médico")` is titled `Médico` when it appears
+    /// and titled `Dr. Carlos Mendes` a moment later, once the request comes back — and `viewDidAppear`
+    /// fires again every time the user returns to it or closes something over it. Measured on a real
+    /// app: `Médico` at 18:32:54, `Dr. Carlos Mendes` at 18:33:35, `Dr. Marcos Silva` at 18:36:53, three
+    /// nodes for one screen and one more waiting for every doctor in the database.
+    ///
+    /// The first title is also the right one, and not by luck: it is what the screen says before it
+    /// knows anything, which is the only part of it that is about the screen rather than about a record.
+    private let assignedNames = NSMapTable<UIViewController, NSString>.weakToStrongObjects()
+    /// What each screen called itself before the transition, and therefore before its data arrived.
+    ///
+    /// The title has to be caught here or not at all. `viewDidAppear` fires when the push animation
+    /// finishes — about 350 ms — and a detail screen fetching from a backend on the same machine has
+    /// its answer in 50 ms, so by then `.navigationTitle(doctor.name ?? "Médico")` already says
+    /// `Dr. Carlos Mendes`. Measured twice: the first attempt at this only read late and recorded
+    /// three doctors as three screens.
+    private let titlesOnEntry = NSMapTable<UIViewController, NSString>.weakToStrongObjects()
+    /// Screens already reported for having a title that moves, so it is said once rather than per visit.
+    private var driftReported: Set<String> = []
     /// The composite of the most recent capture, which is what a heatmap is anchored to.
     private var lastCaptureId: String?
     /// The screenshot waiting out its quiet period, if any.
@@ -92,6 +127,9 @@ final class ScreenTracker {
             ViewControllerObserver.onAppear = { [weak self] controller in
                 self?.observed(controller)
             }
+            ViewControllerObserver.onWillAppear = { [weak self] controller in
+                self?.rememberTitleOnEntry(of: controller)
+            }
             ViewControllerObserver.install()
         }
 
@@ -136,11 +174,9 @@ final class ScreenTracker {
 
         case .unnamedSwiftUIHost:
             // Every SwiftUI screen in the app lands here, under one of a handful of mangled generic
-            // names that stand for the same container. Collapsed onto one node so the map says
-            // "unnamed" once instead of inventing a navigation every time SwiftUI changes which
-            // container holds the screen.
-            adviseSwiftUIIsUnnamed(host: name, mappedTo: unnamedSwiftUIScreenName)
-            enter(screen: unnamedSwiftUIScreenName, kind: .swiftUI, transition: "appear")
+            // names that stand for the same container — so the class name is no help and the screen
+            // has to say what it is some other way. It usually already does; see `nameSwiftUIHost`.
+            nameSwiftUIHost(controller, container: name)
             return
 
         case .screen:
@@ -173,6 +209,131 @@ final class ScreenTracker {
                 self.enter(screen: name, kind: .uiKit, transition: "appear")
                 self.adviseSwiftUIIsUnnamed(host: name, mappedTo: name)
             }
+        }
+    }
+
+    /// Names a SwiftUI screen the app has not named, from the screen itself.
+    ///
+    /// `.navigationTitle("Roteiro")` becomes an ordinary `navigationItem.title` on a hosting
+    /// controller of its own, because `NavigationStack` runs on a real `UINavigationController`. So an
+    /// app that wrote titles for its users — which is nearly every app, and was nineteen of one real
+    /// app's twenty-one screens — has already named its screens for the SDK without knowing it.
+    ///
+    /// The title is read twice when it has to be. At `viewDidAppear` SwiftUI has not always set it
+    /// yet, and reporting the placeholder then and the title a moment later would draw an edge
+    /// between two names for one screen — a navigation the user never made, which is the exact bug
+    /// the host-report grace exists to avoid. So nothing is reported until there is an answer: now if
+    /// the title is there, after the same short grace if it is not.
+    /// Notes what a screen calls itself on the way in, before anything it is fetching comes back.
+    ///
+    /// Kept for hosting controllers only. A UIKit screen is named after its class and has no use for
+    /// this, and remembering a title for every controller in the app would be a map of the keyboard.
+    private func rememberTitleOnEntry(of controller: UIViewController) {
+        guard controller.isLightSessionHostingController,
+              titlesOnEntry.object(forKey: controller) == nil,
+              let title = controller.lightSessionTitle
+        else { return }
+        titlesOnEntry.setObject(title as NSString, forKey: controller)
+    }
+
+    private func nameSwiftUIHost(_ controller: UIViewController, container: String) {
+        // Decided once. Re-reading on a later appearance is what turned one screen into a node per
+        // record; see `assignedNames`.
+        if let already = assignedNames.object(forKey: controller) as String? {
+            noteTitleDrift(on: controller, named: already)
+            enter(screen: already, kind: .swiftUI, transition: "appear")
+            return
+        }
+
+        // The entry title first: it is what the screen said before it knew anything, which is the
+        // only part of a title that is about the screen rather than about a record.
+        if let title = titlesOnEntry.object(forKey: controller) as String?
+            ?? controller.lightSessionTitle {
+            enterSwiftUI(title: title, container: container, on: controller)
+            return
+        }
+
+        let reports = screenReportCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak controller] in
+            guard let self else { return }
+            // Something named this screen while we waited — the app, or a controller further in that
+            // did have a title. Either beats the placeholder, and reporting it now would draw an edge
+            // between two names for one screen: a navigation the user never made.
+            guard self.screenReportCount == reports else {
+                LightSessionLog.debug("\(container): the screen was named while waiting; nothing to add")
+                return
+            }
+            // Read again rather than reused: SwiftUI does not always have the title set by the time
+            // `viewDidAppear` fires, and this wait is what it is for.
+            guard let controller else { return }
+            self.enterSwiftUI(
+                title: self.titlesOnEntry.object(forKey: controller) as String?
+                    ?? controller.lightSessionTitle,
+                container: container,
+                on: controller
+            )
+        }
+    }
+
+    /// Says, once per screen, that its title is not a screen name.
+    ///
+    /// Worth saying rather than silently doing the right thing: the developer sees `Médico` in the map
+    /// and may be looking for the doctor's name. This tells them where it went and how to choose
+    /// something else.
+    private func noteTitleDrift(on controller: UIViewController, named assigned: String) {
+        guard let now = controller.lightSessionTitle, now != assigned else { return }
+        guard driftReported.insert(assigned).inserted else { return }
+        LightSessionLog.info(
+            "the screen mapped as \"\(assigned)\" is now titled \"\(now)\". A title that changes is "
+                + "data rather than a screen name, and following it would add a node per record — so "
+                + "the first one is kept. Use `.lightSessionScreen(\"Name\")` on that screen to "
+                + "choose the name yourself."
+        )
+    }
+
+    private func enterSwiftUI(title: String?, container: String, on controller: UIViewController) {
+        switch nameForSwiftUIHost(
+            title: title,
+            alreadyNamed: titlesSeen.count,
+            naming: config.swiftUITitleNaming
+        ) {
+        case .title(let name):
+            titlesSeen.insert(name)
+            assignedNames.setObject(name as NSString, forKey: controller)
+            enter(screen: name, kind: .swiftUI, transition: "appear")
+
+        case .tooManyTitles:
+            // Said once, and it is worth saying loudly: past this point the map is being built from
+            // something that is not a screen name, and every session adds more of it.
+            if !titleLimitReported {
+                titleLimitReported = true
+                LightSessionLog.info(
+                    """
+                    \(titlesSeen.count) screens have been named from their navigation titles, which is \
+                    more than an app usually has — a title built from data, like \
+                    `.navigationTitle(doctor.name)`, is one node per record rather than one per screen. \
+                    Titles are no longer being read. Name those screens with \
+                    `.lightSessionScreen("Name")` and the rest will keep working.
+                    """
+                )
+            }
+            enter(screen: unnamedSwiftUIScreenName, kind: .swiftUI, transition: "appear")
+
+        case .placeholder where controller.isLightSessionPresentedModally:
+            // A sheet with no title is not an unnamed screen, it is not a screen. Reporting the
+            // placeholder here put a node between a screen and itself: measured on the sample,
+            // opening a sheet recorded `Message -> SwiftUI (unnamed)` and closing it recorded the
+            // way back, two navigations the user never made. The screen underneath stays current,
+            // which is what the user would say they were looking at.
+            //
+            // A sheet that *does* have a title is left alone and becomes a screen of its own. It has
+            // a real name, and naming it is better than dropping it — though `lightSessionSubScreen`
+            // still describes it more truthfully, as a part of the screen that opened it.
+            LightSessionLog.debug("an untitled sheet over \(lastReported ?? "?") is not a screen")
+
+        case .placeholder:
+            adviseSwiftUIIsUnnamed(host: container, mappedTo: unnamedSwiftUIScreenName)
+            enter(screen: unnamedSwiftUIScreenName, kind: .swiftUI, transition: "appear")
         }
     }
 
@@ -253,6 +414,7 @@ final class ScreenTracker {
 
         let previous = lastReported
         lastReported = full
+        screenReportCount += 1
         // Leaving cancels the screenshot the previous screen was waiting for: it would record a state nobody
         // navigated to, and it would be filed under a screen the person is no longer on.
         cancelPendingScreenshot()
