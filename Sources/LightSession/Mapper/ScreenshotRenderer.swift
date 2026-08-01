@@ -15,34 +15,32 @@ enum ScreenshotRenderer {
     /// What gets covered. The rule itself lives in `MaskGeometry`, where a test can reach it.
     typealias MaskPolicy = MaskGeometry.Policy
 
-    /// A JPEG of the window, masked, or `nil` if there was nothing to draw.
+    /// The window, masked, as pixels. **Main thread**: it reads the view hierarchy.
+    ///
+    /// Split from the encoding on purpose. This half has to be on the main thread and has to be inside
+    /// the frame the main thread owes the screen; the half that turns pixels into a JPEG touches no UIKit
+    /// state and belongs anywhere else. Keeping them in one function meant the replay paid for the
+    /// encoding out of the same budget as the drawing, on every tick.
     ///
     /// - Parameters:
     ///   - window: the window to render.
     ///   - snapshot: the hierarchy as already captured for the wireframe. Passed in rather than
     ///     re-walked so the mask cannot disagree with the wireframe about what a view is.
     ///   - policy: what to cover.
-    ///   - quality: JPEG quality. 0.6 is not a quality decision but a size one: these are uploaded
-    ///     from a user's device, on their data.
     ///   - scale: pixels per point. Defaults to the screen's own, which is what a screen-map capture wants.
     ///     A replay frame passes something smaller: it is watched in a small player, and full resolution
     ///     costs bytes nobody looks at.
-    static func render(
+    static func capture(
         window: UIWindow,
         snapshot: ViewSnapshot,
         policy: MaskPolicy,
-        quality: CGFloat = 0.6,
         scale: CGFloat? = nil
-    ) -> Data? {
-        assert(Thread.isMainThread, "rendering reads the view hierarchy")
+    ) -> CGImage? {
+        assert(Thread.isMainThread, "capturing reads the view hierarchy")
         let bounds = window.bounds
         guard bounds.width > 0, bounds.height > 0 else { return nil }
 
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = scale ?? window.screen.scale
-        format.opaque = true
-
-        let image = UIGraphicsImageRenderer(bounds: bounds, format: format).image { context in
+        return BitmapRenderer.image(size: bounds.size, scale: scale ?? window.screen.scale) { cg in
             // `drawHierarchy` rather than `layer.render(in:)`: the layer path misses anything drawn by
             // the compositor rather than by CoreAnimation — visual-effect blurs come out as holes, and
             // a wireframe with holes in it looks like a rendering bug in the product.
@@ -52,14 +50,37 @@ enum ScreenshotRenderer {
             // Android the equivalent — forcing a draw — was measurable in the app's own frame timing.
             window.drawHierarchy(in: bounds, afterScreenUpdates: false)
 
-            let cg = context.cgContext
             cg.setFillColor(UIColor.systemGray3.cgColor)
             for rect in maskRects(in: snapshot, policy: policy, bounds: bounds) {
                 cg.fill(rect)
             }
         }
+    }
 
-        return image.jpegData(compressionQuality: quality)
+    /// Pixels as a JPEG. Safe off the main thread: nothing here reads a view.
+    ///
+    /// - Parameter quality: not a quality decision but a size one — these are uploaded from a user's
+    ///   device, on their data.
+    static func encode(_ image: CGImage, quality: CGFloat) -> Data? {
+        UIImage(cgImage: image).jpegData(compressionQuality: quality)
+    }
+
+    /// Both halves, for a caller with no reason to separate them.
+    ///
+    /// The screen map captures one frame per screen, from a settle callback that is already on the main
+    /// thread and is not competing with anything. The replay, which captures continuously, uses the two
+    /// halves directly.
+    static func render(
+        window: UIWindow,
+        snapshot: ViewSnapshot,
+        policy: MaskPolicy,
+        quality: CGFloat = 0.6,
+        scale: CGFloat? = nil
+    ) -> Data? {
+        guard let image = capture(window: window, snapshot: snapshot, policy: policy, scale: scale) else {
+            return nil
+        }
+        return encode(image, quality: quality)
     }
 
     /// The rectangles to cover, in the window's own coordinate space.
