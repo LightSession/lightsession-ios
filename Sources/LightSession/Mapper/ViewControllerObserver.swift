@@ -31,6 +31,14 @@ final class ViewControllerObserver {
     /// Called before the transition, so a title can be read before the screen's data replaces it.
     static var onWillAppear: ((UIViewController) -> Void)?
 
+    /// Called as a controller *starts* to go away, while its pixels are still the screen.
+    ///
+    /// This is the only moment a departing screen can be photographed. At `viewDidDisappear` the view
+    /// is out of the hierarchy and a capture shows whatever replaced it — the exact mistake the
+    /// screenshot pipeline was built to avoid. At `viewWillDisappear` the transition has not drawn its
+    /// first frame: the window still renders the screen the person is leaving.
+    static var onWillDisappear: ((UIViewController) -> Void)?
+
     /// Called when a controller goes away, which for a sheet is the only signal there is.
     ///
     /// A SwiftUI sheet is a page sheet: the screen underneath is never removed from the hierarchy, so
@@ -67,6 +75,19 @@ final class ViewControllerObserver {
             method_exchangeImplementations(willAppear, replacement)
         } else {
             LightSessionLog.error("could not hook viewWillAppear; SwiftUI titles may name records")
+        }
+
+        if let willDisappear = class_getInstanceMethod(
+            cls, #selector(UIViewController.viewWillDisappear(_:))
+        ),
+            let replacement = class_getInstanceMethod(
+                cls, #selector(UIViewController.lightSession_viewWillDisappear(_:))
+            ) {
+            method_exchangeImplementations(willDisappear, replacement)
+        } else {
+            LightSessionLog.error(
+                "could not hook viewWillDisappear; a screen touched until the moment it is left will have no screenshot"
+            )
         }
 
         if let didDisappear = class_getInstanceMethod(cls, #selector(UIViewController.viewDidDisappear(_:))),
@@ -136,6 +157,11 @@ extension UIViewController {
     @objc fileprivate func lightSession_viewWillAppear(_ animated: Bool) {
         lightSession_viewWillAppear(animated)
         ViewControllerObserver.onWillAppear?(self)
+    }
+
+    @objc fileprivate func lightSession_viewWillDisappear(_ animated: Bool) {
+        lightSession_viewWillDisappear(animated)
+        ViewControllerObserver.onWillDisappear?(self)
     }
 
     @objc fileprivate func lightSession_viewDidDisappear(_ animated: Bool) {

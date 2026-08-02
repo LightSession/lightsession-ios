@@ -74,3 +74,52 @@ final class ScreenshotTimingTests: XCTestCase {
         XCTAssertEqual(ScreenshotTiming.quietPeriod, 5.5)
     }
 }
+
+/// The departure rule: the last chance for a screen the quiet period could never photograph.
+///
+/// The canonical case is a login form — touched from arrival to departure, so every keystroke cancels
+/// the timer and the screen everyone's session starts on never gets a real picture. Leaving is itself
+/// the quiet moment: the finger is up and nothing can change the screen again.
+final class ScreenshotDepartureTests: XCTestCase {
+
+    /// The login case, stated as the rule's reason to exist. Note there is no `wasTouched` parameter to
+    /// pass: a screen touched until the moment it is left is exactly what this captures.
+    func testALeavingScreenStillOwedItsScreenshotIsCaptured() {
+        XCTAssertNil(
+            ScreenshotTiming.decideOnDeparture(
+                owedFor: "Login", currentScreen: "Login", isRecording: true, isInteractive: false
+            )
+        )
+    }
+
+    /// A swipe-back is a screen sliding under a finger; a capture taken then is a smear of two screens,
+    /// stored as *the* picture of one of them.
+    func testAnInteractiveDepartureIsNotCaptured() {
+        XCTAssertEqual(
+            ScreenshotTiming.decideOnDeparture(
+                owedFor: "Login", currentScreen: "Login", isRecording: true, isInteractive: true
+            ),
+            .interactiveTransition
+        )
+    }
+
+    /// A disappearance that arrives after the next screen was reported is about a screen that already
+    /// had its last chance.
+    func testAStrayDepartureAfterTheNextScreenReportedIsIgnored() {
+        XCTAssertEqual(
+            ScreenshotTiming.decideOnDeparture(
+                owedFor: "Login", currentScreen: "Home", isRecording: true, isInteractive: false
+            ),
+            .navigatedAway
+        )
+    }
+
+    func testNothingIsCapturedOnceRecordingStopped() {
+        XCTAssertEqual(
+            ScreenshotTiming.decideOnDeparture(
+                owedFor: "Login", currentScreen: "Login", isRecording: false, isInteractive: false
+            ),
+            .recordingStopped
+        )
+    }
+}

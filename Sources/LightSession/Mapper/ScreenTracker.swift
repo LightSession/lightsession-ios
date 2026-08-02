@@ -83,6 +83,18 @@ final class ScreenTracker {
     private var lastCaptureId: String?
     /// The screenshot waiting out its quiet period, if any.
     private var pendingScreenshot: DispatchWorkItem?
+    /// The screenshot the current screen is owed, whether or not a timer is still running for it.
+    ///
+    /// Distinct from `pendingScreenshot`, and the distinction is the login bug. A touch cancels the
+    /// work item — `pendingScreenshot` goes nil — but the screen is still owed its picture; the debt is
+    /// only settled by a capture or by navigating on to another screen. A form touched from arrival to
+    /// departure is nil-pending and owed the whole time, and departure is when the debt gets paid.
+    ///
+    /// Carries the settle-time snapshot for one reason: the route-change flavour of the departure
+    /// capture runs when the view tree already belongs to the *next* screen, so reading the hierarchy
+    /// then would mask the old pixels with the new screen's rectangles. The tree as it stood when the
+    /// wireframe was built is the one that describes the pixels being captured.
+    private var screenshotOwed: (screen: String, kind: ScreenIdentity.Kind, snapshot: ViewSnapshot)?
     /// Whether the screen was touched since the screenshot was scheduled.
     private var touchedSinceScheduled = false
     /// Edges whose request is out and has not come back.
@@ -150,6 +162,9 @@ final class ScreenTracker {
             }
             ViewControllerObserver.onWillAppear = { [weak self] controller in
                 self?.rememberTitleOnEntry(of: controller)
+            }
+            ViewControllerObserver.onWillDisappear = { [weak self] controller in
+                self?.screenIsLeaving(controller)
             }
             ViewControllerObserver.onDisappear = { [weak self] _ in
                 self?.somethingLeftTheScreen()
@@ -501,11 +516,32 @@ final class ScreenTracker {
         guard full != lastReported else { return }
 
         let previous = lastReported
+
+        // The departure capture's second flavour, for the navigation UIKit cannot see. When a SwiftUI
+        // app swaps its route, the host stays and no controller disappears — the only signal that the
+        // old screen is leaving is this very report of the new one. It arrives from `onAppear`, in the
+        // turn whose commit will draw the new screen: the window's last committed frame is still the
+        // old one, so it can still be photographed. Only for `"report"` transitions — a report arriving
+        // by `"appear"` fires at `viewDidAppear`, when the committed frame already shows the new screen
+        // (or the sheet now covering the debtor), and a picture taken then would be filed under a
+        // screen it does not show. Those had their chance in `screenIsLeaving`.
+        if transition == "report",
+           let owed = screenshotOwed, owed.screen == previous,
+           Recording.shared.isEnabled,
+           let window = UIApplication.shared.lightSessionKeyWindow {
+            screenshotOwed = nil
+            LightSessionLog.debug("screenshot of \(owed.screen) taken at route change: the quiet period never elapsed")
+            captureScreenshot(screen: owed.screen, kind: owed.kind, window: window, describedBy: owed.snapshot)
+        }
+
         lastReported = full
         screenReportCount += 1
         // Leaving cancels the screenshot the previous screen was waiting for: it would record a state nobody
-        // navigated to, and it would be filed under a screen the person is no longer on.
+        // navigated to, and it would be filed under a screen the person is no longer on. The debt goes
+        // with it — by the time the next screen is reported, the departing one has had its last chance,
+        // in `screenIsLeaving`.
         cancelPendingScreenshot()
+        screenshotOwed = nil
 
         // Announced for every change, including the first, where `previous` is nil: a replay needs to know
         // which screen it opens on, and the flow below is deliberately not sent for that case because a
@@ -686,7 +722,7 @@ final class ScreenTracker {
         }
 
         guard config.captureRealScreens, !state.hasScreenshot else { return }
-        scheduleScreenshot(screen: screen, kind: kind, window: window)
+        scheduleScreenshot(screen: screen, kind: kind, window: window, settledAs: snapshot)
     }
 
     /// Schedules the upgrade from wireframe to a real screenshot.
@@ -697,9 +733,15 @@ final class ScreenTracker {
     /// The window is captured weakly and re-read at fire time rather than the snapshot being reused from the
     /// wireframe: the whole reason for waiting is that the screen is still arriving, so a mask built five
     /// seconds ago would describe a screen that no longer exists — and the mask is what keeps text off the wire.
-    private func scheduleScreenshot(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
+    private func scheduleScreenshot(
+        screen: String,
+        kind: ScreenIdentity.Kind,
+        window: UIWindow,
+        settledAs snapshot: ViewSnapshot
+    ) {
         cancelPendingScreenshot()
         touchedSinceScheduled = false
+        screenshotOwed = (screen, kind, snapshot)
 
         let work = DispatchWorkItem { [weak self, weak window] in
             guard let self else { return }
@@ -715,6 +757,7 @@ final class ScreenTracker {
                 return
             }
             guard let window else { return }
+            self.screenshotOwed = nil
             self.captureScreenshot(screen: screen, kind: kind, window: window)
         }
         pendingScreenshot = work
@@ -734,9 +777,92 @@ final class ScreenTracker {
         pendingScreenshot = nil
     }
 
+    /// The quiet period's last chance: a screen leaving with its screenshot still owed is captured now,
+    /// before the transition's first frame replaces its pixels.
+    ///
+    /// This exists for the screens the quiet period can never photograph — the ones touched from
+    /// arrival to departure, which is every form and above all the login. Measured before this existed:
+    /// `Login` had no real screenshot in any session, because every keystroke cancelled the timer and
+    /// the navigation away cancelled whatever was left. Departure is itself the quiet moment the rule
+    /// waits for: the finger is up and nothing can change the screen again.
+    ///
+    /// Synchronous on purpose, and the moment matters more than it looks. This runs inside
+    /// `viewWillDisappear`, when the outgoing view is still in the hierarchy and the window's last
+    /// committed frame is still the departing screen — `drawHierarchy(afterScreenUpdates: false)` reads
+    /// exactly that frame. One run-loop turn later the transition has drawn and the picture is of two
+    /// screens mid-slide. That is also why this cannot share `somethingLeftTheScreen`'s deferred
+    /// re-read: by `viewDidDisappear` there is nothing left to photograph.
+    ///
+    /// Filtered by role, which the timer path never needed: `viewWillDisappear` fires for containers
+    /// (alongside the screen they hold), for alerts and for the keyboard's own controllers. A capture
+    /// triggered by an alert closing would file a picture of the alert mid-dismissal as *the* screenshot
+    /// of the screen under it. Only a controller that is itself a screen — or the host every SwiftUI
+    /// screen lives in, which is what departs when a route changes — settles the debt.
+    private func screenIsLeaving(_ controller: UIViewController) {
+        guard let owed = screenshotOwed else { return }
+
+        switch roleOfObservedController(
+            isOnScreen: controller.isLightSessionOnScreen,
+            isContainer: controller.isLightSessionContainer,
+            isOwnedByApp: controller.isLightSessionOwnedByApp,
+            isHostingController: controller.isLightSessionHostingController
+        ) {
+        case .screen, .unnamedSwiftUIHost:
+            break
+        case .offscreen, .container, .systemFurniture:
+            return
+        }
+
+        if let reason = ScreenshotTiming.decideOnDeparture(
+            owedFor: owed.screen,
+            currentScreen: lastReported,
+            isRecording: Recording.shared.isEnabled,
+            isInteractive: controller.transitionCoordinator?.isInteractive == true
+        ) {
+            LightSessionLog.debug("departure screenshot of \(owed.screen) skipped: \(reason)")
+            return
+        }
+
+        // A screen leaving under a standing cover is not photographed: the committed frame shows the
+        // cover, and the cover is transient chrome — measured on the sample's alert route, where a
+        // screen popped with its alert still up filed a picture of the dialog as *the* screenshot of
+        // the screen. `isBeingPresented` is what separates that from the other way this state occurs:
+        // when a full-screen modal is the very thing driving the departure, the cover's presentation
+        // has only just begun, the committed frame is still the clean screen, and skipping would throw
+        // away the one capture this exists to take.
+        if let cover = controller.presentedViewController, !cover.isBeingPresented {
+            LightSessionLog.debug(
+                "departure screenshot of \(owed.screen) skipped: it is leaving under \(type(of: cover))"
+            )
+            return
+        }
+
+        // The controller's own window rather than the key one: a root swap has already made a new
+        // controller the root by the time the old one's `viewWillDisappear` runs, but the departing
+        // view is still attached and its window is the one whose last frame shows it.
+        guard let window = controller.view.window else { return }
+
+        screenshotOwed = nil
+        cancelPendingScreenshot()
+        LightSessionLog.debug("screenshot of \(owed.screen) taken on departure: the quiet period never elapsed")
+        captureScreenshot(screen: owed.screen, kind: owed.kind, window: window)
+    }
+
     /// Renders and uploads the screenshot, reading the screen as it is now.
-    private func captureScreenshot(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
-        let snapshot = window.lightSessionContent
+    ///
+    /// - Parameter describedBy: the tree that describes the pixels being captured, when reading the
+    ///   hierarchy now would describe something else. `drawHierarchy(afterScreenUpdates: false)` renders
+    ///   the last *committed* frame, and at a route change that frame is the departing screen while the
+    ///   tree already belongs to the next one — masking one screen's pixels with another screen's
+    ///   rectangles is how text goes out uncovered. Nil means the hierarchy is the truth, which it is
+    ///   everywhere else.
+    private func captureScreenshot(
+        screen: String,
+        kind: ScreenIdentity.Kind,
+        window: UIWindow,
+        describedBy: ViewSnapshot? = nil
+    ) {
+        let snapshot = describedBy ?? window.lightSessionContent
         guard let frame = SkeletonBuilder.build(
             root: snapshot,
             scale: Double(window.screen.scale),
@@ -757,31 +883,44 @@ final class ScreenTracker {
         )
         guard !cache.state(forCapture: compositeId).hasScreenshot else { return }
 
+        // The two halves separately, with only the one that reads views on the main thread. This runs
+        // at two moments now, and one of them is the first frame of a transition — the reading is what
+        // must happen there (the pixels are about to change), while the JPEG encode is pure arithmetic
+        // that would spend those milliseconds blocking the very animation the person just started.
         let policy = ScreenshotRenderer.MaskPolicy(text: config.maskText, images: config.maskImages)
-        guard let jpeg = ScreenshotRenderer.render(window: window, snapshot: snapshot, policy: policy) else {
+        guard let image = ScreenshotRenderer.capture(window: window, snapshot: snapshot, policy: policy) else {
             LightSessionLog.debug("\(screen) could not be rendered")
             return
         }
 
-        let withImage = ScreenReport(
-            compositeId: compositeId,
-            name: screen,
-            kind: kind,
-            skeleton: nil,
-            imageBase64: jpeg.base64EncodedString(),
-            width: frame.width,
-            height: frame.height,
-            theme: theme,
-            appVersionName: appVersionName,
-            appVersionCode: appVersionCode
-        )
-        sender.replaceScreenshot(screen: withImage) { [weak self] result in
-            switch result {
-            case .success:
-                self?.cache.recordScreenshot(forCapture: compositeId)
-                LightSessionLog.debug("screenshot sent: \(screen) (\(jpeg.count) bytes)")
-            case .failure(let error):
-                LightSessionLog.error("screenshot \(screen) failed: \(error.localizedDescription)")
+        let appVersionName = self.appVersionName
+        let appVersionCode = self.appVersionCode
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let jpeg = ScreenshotRenderer.encode(image, quality: 0.6) else { return }
+
+            let withImage = ScreenReport(
+                compositeId: compositeId,
+                name: screen,
+                kind: kind,
+                skeleton: nil,
+                imageBase64: jpeg.base64EncodedString(),
+                width: frame.width,
+                height: frame.height,
+                theme: theme,
+                appVersionName: appVersionName,
+                appVersionCode: appVersionCode
+            )
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.sender.replaceScreenshot(screen: withImage) { [weak self] result in
+                    switch result {
+                    case .success:
+                        self?.cache.recordScreenshot(forCapture: compositeId)
+                        LightSessionLog.debug("screenshot sent: \(screen) (\(jpeg.count) bytes)")
+                    case .failure(let error):
+                        LightSessionLog.error("screenshot \(screen) failed: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }

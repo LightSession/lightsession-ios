@@ -21,6 +21,13 @@ public enum ScreenshotTiming {
 
     /// Why a scheduled screenshot did not happen.
     public enum Cancellation: Equatable, Sendable {
+        /// The transition out is being driven by a finger.
+        ///
+        /// Only the departure capture can meet this one. A swipe-back is a screen sliding under a
+        /// finger, and a capture taken then is a smear of two screens — worse than no capture, because
+        /// it is stored as *the* picture of the screen. Skipped rather than retried: if the gesture is
+        /// cancelled the screen stays, still owed, and the next departure tries again.
+        case interactiveTransition
         /// The person touched the screen.
         ///
         /// **Cancelled, not postponed**, and that is the decision worth being exact about — the obvious reading
@@ -46,6 +53,36 @@ public enum ScreenshotTiming {
     ) -> Cancellation? {
         if !isRecording { return .recordingStopped }
         if wasTouched { return .touched }
+        if currentScreen != screen { return .navigatedAway }
+        return nil
+    }
+
+    /// Whether a screen still owed its screenshot may be captured at the moment it leaves.
+    ///
+    /// The quiet period has a blind spot, and it is not a corner case — it is the most-touched screens
+    /// in the app. A login form is touched from arrival to departure: every keystroke cancels the
+    /// capture, and then the person leaves, so the screen everyone's session starts on is the one
+    /// screen with no real picture. Measured on a real app: its `Login` never got a screenshot in any
+    /// session, ever.
+    ///
+    /// Departure closes it, because leaving is itself the quiet moment the rule was waiting for: the
+    /// finger is up, the layout is final, and nothing the person does can change the screen again. The
+    /// touch rule's own reasoning — "if they interacted, the screen is no longer the one they arrived
+    /// at" — is an argument *for* capturing now: what they turned it into is the screen as they used
+    /// it, and it is the last chance to record that.
+    ///
+    /// `wasTouched` is deliberately not a parameter. The touched case is not tolerated here, it is the
+    /// case this exists for.
+    public static func decideOnDeparture(
+        owedFor screen: String,
+        currentScreen: String?,
+        isRecording: Bool,
+        isInteractive: Bool
+    ) -> Cancellation? {
+        if !isRecording { return .recordingStopped }
+        if isInteractive { return .interactiveTransition }
+        // A stray disappearance arriving after the next screen was reported. What is owed belongs to a
+        // screen no longer current, and `capture` for the new one has already cancelled it.
         if currentScreen != screen { return .navigatedAway }
         return nil
     }
