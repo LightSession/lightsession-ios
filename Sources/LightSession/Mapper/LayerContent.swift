@@ -5,6 +5,7 @@
 import LightSessionSafe
 #endif
 import CoreGraphics
+import Foundation
 import QuartzCore
 
 /// The content a walk of the view hierarchy cannot see.
@@ -89,6 +90,16 @@ enum LayerContent {
     static func kind(of layer: CALayer) -> NodeKind? {
         // The one text layer with a public class. No name matching needed, so it cannot rot.
         if layer is CATextLayer { return .text }
+
+        // SwiftUI's own text layer, by name — the exception to this file's structural rule, and a
+        // deliberate one. On the iOS 27 beta, CGDrawingLayer draws its glyphs from a display callback
+        // *without setting `contents`*, so the structural check below stops seeing it: every SwiftUI
+        // text on that OS would fall out of the wireframe and, worse, out of the mask — a label the
+        // screenshot shows and nothing covers. On today's iOS the layer still carries `contents` and
+        // this line changes nothing; it exists so the mask does not spring a leak the day the beta
+        // ships. Suffix match because the class name arrives mangled with a module prefix. Errs the
+        // safe way round: a false match masks a rectangle as text rather than exposing one.
+        if NSStringFromClass(type(of: layer)).hasSuffix("CGDrawingLayer") { return .text }
 
         if layer.contents != nil {
             // The only name check here, and it is aimed the safe way round: recognising an image relaxes the
