@@ -33,13 +33,54 @@ extension UIView {
             color: lightSessionBackgroundColor,
             clipsToBounds: clipsToBounds,
             declaresOpaque: isOpaque,
-            children: subviews.map { $0.lightSessionSnapshot(in: window) }
-                // Then whatever this view's own layers draw that no subview stands for, which on a SwiftUI
-                // screen is most of the screen. Appended after the subviews rather than interleaved by depth:
-                // paint order decides which masks an opaque cover discards, and coming last means these are
-                // kept when in doubt — a mask too many rather than a word left legible.
-                + LayerContent.nodes(under: layer)
+            children: lightSessionChildrenInPaintOrder(in: window)
         )
+    }
+
+    /// Everything drawn inside this view, in the order it is painted.
+    ///
+    /// Subviews and the view's own drawing layers are **siblings** — both are entries in
+    /// `layer.sublayers`, and that list is the paint order. This used to walk the subviews and then
+    /// append the layers, which is not an ordering at all: it puts every layer on top of every subview
+    /// regardless of where they really sit.
+    ///
+    /// For a UIKit screen the difference is invisible, because a UIKit view's content is its subviews
+    /// and there is nothing in the layer list to misplace. For a SwiftUI screen it destroyed the
+    /// wireframe. Measured on a form sheet with four fields and a button — the SDK built twenty-five
+    /// nodes and the picture had three colours, because the node after all of them was this:
+    ///
+    ///     node[23] UNKNOWN 0,186 1206x2436 color=#F7F7F7
+    ///
+    /// the sheet's own background, painted last and therefore over everything. The rendered wireframe
+    /// showed 62 pixels of the button and none of the fields.
+    ///
+    /// The old order was chosen for the mask, on the grounds that a cover arriving last discards more
+    /// and errs towards masking. Correct order errs the same way for the only case that matters: a
+    /// node genuinely behind an opaque cover is one the screenshot does not show either.
+    func lightSessionChildrenInPaintOrder(in window: UIWindow) -> [ViewSnapshot] {
+        guard let sublayers = layer.sublayers, !sublayers.isEmpty else {
+            return subviews.map { $0.lightSessionSnapshot(in: window) }
+        }
+
+        var children: [ViewSnapshot] = []
+        var unplaced = subviews
+
+        for sublayer in sublayers {
+            if let owner = sublayer.delegate as? UIView {
+                // A view's own layer. Walked as a view — with its class, its traits and its subviews —
+                // at the position the layer list gives it.
+                guard let index = unplaced.firstIndex(where: { $0 === owner }) else { continue }
+                unplaced.remove(at: index)
+                children.append(owner.lightSessionSnapshot(in: window))
+            } else {
+                children.append(contentsOf: LayerContent.node(for: sublayer))
+            }
+        }
+
+        // A subview whose layer is not a direct sublayer of this one still has to be described. It
+        // should not happen; losing a screen's content to an assumption about UIKit would.
+        children.append(contentsOf: unplaced.map { $0.lightSessionSnapshot(in: window) })
+        return children
     }
 
     /// This view's rectangle in the window, as it is **on screen right now**.

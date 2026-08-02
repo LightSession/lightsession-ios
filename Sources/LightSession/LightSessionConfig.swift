@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 /// Everything the SDK needs, and nothing it can work out for itself.
 public struct LightSessionConfig: Sendable {
@@ -124,19 +125,46 @@ public struct LightSessionConfig: Sendable {
 /// `print` behind one function rather than at thirty call sites, so it is one edit to route this into
 /// `OSLog` or to silence it. Everything it prints is prefixed, because a library that writes
 /// unattributed lines into an app's console is a library the app's developer comes to resent.
+/// What the SDK says about itself, to both places a person might look.
+///
+/// `print` alone was the whole of this, and it goes to standard output — which exists only when the
+/// app was launched from a terminal or from Xcode. An app the *user* opened, by tapping it, writes
+/// into nothing. That is the normal case for anyone investigating a report from a real device or a
+/// tester's simulator, and it made the SDK silent exactly when someone needed to hear it: a wireframe
+/// came back wrong, the count that would have explained it was being logged, and there was no way to
+/// read it without rebuilding and relaunching the app by hand.
+///
+/// So every line also goes to the unified log, where `log show --predicate 'subsystem == "…"'` finds
+/// it after the fact, whoever started the app. `print` stays because a console attached to a running
+/// sample is still the fastest way to watch a walk happen.
 enum LightSessionLog {
     static var isVerbose = false
 
+    private static let log = OSLog(subsystem: "com.lightsession.sdk", category: "LightSession")
+
     static func debug(_ message: @autoclosure () -> String) {
         guard isVerbose else { return }
-        print("[LightSession] \(message())")
+        // Sent as `info`, not `debug`, and the reason is that `debug` does not survive. The unified log
+        // discards that level unless someone has enabled it for the subsystem beforehand — which nobody
+        // has done when they are reading a log to find out what went wrong. These lines are already
+        // behind `verbose`, so a developer who turned it on has asked for them; making them
+        // unreadable as well would be asking twice.
+        emit(message(), type: .info, prefix: "")
     }
 
     static func info(_ message: @autoclosure () -> String) {
-        print("[LightSession] \(message())")
+        emit(message(), type: .info, prefix: "")
     }
 
     static func error(_ message: @autoclosure () -> String) {
-        print("[LightSession] error: \(message())")
+        emit(message(), type: .error, prefix: "error: ")
+    }
+
+    private static func emit(_ message: String, type: OSLogType, prefix: String) {
+        print("[LightSession] \(prefix)\(message)")
+        // `%{public}@` on purpose: the unified log redacts interpolated strings by default, and a line
+        // that reads `<private>` is a line that helped nobody. Nothing here carries user content — the
+        // SDK logs screen names and counts, and the text it captures never reaches a log.
+        os_log("%{public}@", log: log, type: type, prefix + message)
     }
 }

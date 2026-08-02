@@ -131,6 +131,43 @@ final class SkeletonBuilderTests: XCTestCase {
         XCTAssertEqual(nodes.last?.stroke, false)
     }
 
+    /// The four grey slabs that were a four-field form.
+    ///
+    /// SwiftUI draws a bordered field as a fill and then a rounded-rect *stroke* on top, the stroke
+    /// being a layer with no background colour and a border. Emitted as a rectangle that draws, it was
+    /// a solid block the size of the field, painted after it. The rendered wireframe of the sheet had
+    /// four grey blocks and not one orange input, and the grey came to exactly four times 1114×160.
+    func testABorderOnlyNodeStrokesInsteadOfFilling() {
+        let root = ViewSnapshot(
+            frame: rect(0, 0, 100, 100),
+            kind: .unknown,
+            color: opaqueGrey,
+            drawsBorderOnly: true
+        )
+        let nodes = SkeletonBuilder.build(root: root, scale: 1, background: nil)?.nodes ?? []
+        XCTAssertEqual(nodes.first?.stroke, true)
+    }
+
+    /// The other half of the same fix: an outline hides nothing.
+    ///
+    /// A border-only node carries the border's colour, since it has no other. Without this, the rule
+    /// that discards what an opaque rectangle covers would read a field's edge as a solid cover and
+    /// delete the field it is drawn around — the same content, lost a different way.
+    func testABorderOnlyNodeIsNotAnOpaqueCover() {
+        let outline = ViewSnapshot(
+            frame: rect(0, 0, 100, 100),
+            kind: .unknown,
+            color: opaqueGrey,
+            declaresOpaque: true,
+            drawsBorderOnly: true
+        )
+        XCTAssertFalse(CoveredContent.isOpaqueCover(outline))
+
+        var filled = outline
+        filled.drawsBorderOnly = false
+        XCTAssertTrue(CoveredContent.isOpaqueCover(filled), "a filled one still covers")
+    }
+
     /// Content laid out past the window is not on screen.
     func testChildrenAreClippedToTheWindow() {
         let root = ViewSnapshot(

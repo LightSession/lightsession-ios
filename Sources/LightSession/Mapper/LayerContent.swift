@@ -52,7 +52,7 @@ enum LayerContent {
     }
 
     /// This layer as a node, plus whatever is drawn below it — or nothing.
-    private static func node(for layer: CALayer) -> [ViewSnapshot] {
+    static func node(for layer: CALayer) -> [ViewSnapshot] {
         // A view's layer. The view is walked as a view, with its accessibility traits, its class and its
         // subviews; arriving at it again through the layer tree would describe the same rectangle twice.
         // Its own sublayers are its view's business for the same reason.
@@ -65,14 +65,19 @@ enum LayerContent {
             return below
         }
 
+        // An outline and nothing else — see `ViewSnapshot.drawsBorderOnly`. Its colour is the border's,
+        // since it has no other, which is what lets the wireframe draw a field's edge as that edge.
+        let outlineOnly = layer.lightSessionBackgroundColor == nil && layer.lightSessionBorderColor != nil
+
         return [
             ViewSnapshot(
                 frame: layer.lightSessionFrame(),
                 kind: kind,
                 alpha: Double(layer.opacity),
-                color: layer.lightSessionBackgroundColor,
+                color: layer.lightSessionBackgroundColor ?? layer.lightSessionBorderColor,
                 clipsToBounds: layer.masksToBounds,
                 declaresOpaque: layer.isOpaque,
+                drawsBorderOnly: outlineOnly,
                 children: below
             )
         ]
@@ -154,13 +159,26 @@ extension CALayer {
     }
 
     /// The layer's background, when it is solid enough to be worth drawing.
-    ///
-    /// The same threshold the view path uses, for the same reason: a wireframe of every nearly-transparent
-    /// layer is unreadable.
     var lightSessionBackgroundColor: Color? {
-        guard let backgroundColor else { return nil }
-        let components = backgroundColor.components ?? []
-        let alpha = Double(backgroundColor.alpha)
+        backgroundColor.flatMap(Self.lightSessionColor)
+    }
+
+    /// The colour of the layer's border, when it has one wide enough to see.
+    ///
+    /// A border with no width is a colour nobody asked to be drawn, and reporting it would put an
+    /// outline in the wireframe around every layer that happens to carry a default.
+    var lightSessionBorderColor: Color? {
+        guard borderWidth > 0 else { return nil }
+        return borderColor.flatMap(Self.lightSessionColor)
+    }
+
+    /// A `CGColor` as the wire format's colour, or nil when it is too faint to be worth drawing.
+    ///
+    /// The same threshold both callers use, for the same reason: a wireframe of every nearly
+    /// transparent layer is unreadable.
+    static func lightSessionColor(_ color: CGColor) -> Color? {
+        let components = color.components ?? []
+        let alpha = Double(color.alpha)
         guard alpha > 0.05 else { return nil }
         switch components.count {
         case 2:  // grey + alpha

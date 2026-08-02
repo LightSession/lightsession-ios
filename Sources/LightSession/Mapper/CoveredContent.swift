@@ -33,6 +33,9 @@ public enum CoveredContent {
     /// Whether this view hides what is behind it.
     public static func isOpaqueCover(_ node: ViewSnapshot) -> Bool {
         guard !node.isHidden, node.alpha >= opaqueAlpha else { return false }
+        // An outline hides nothing. Its colour is the border's, so without this a bordered field would
+        // read as a solid rectangle and discard the very content it is drawn around.
+        guard !node.drawsBorderOnly else { return false }
         guard node.declaresOpaque else { return false }
         guard let colour = node.color, colour.alpha >= opaqueAlpha else { return false }
         return true

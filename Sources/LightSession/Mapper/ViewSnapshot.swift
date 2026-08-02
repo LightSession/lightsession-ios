@@ -26,6 +26,17 @@ public struct ViewSnapshot: Equatable, Sendable {
     /// whether anything behind the view can show through. `CoveredContent` needs both, and a view that draws a
     /// background while declaring itself non-opaque is one whose backdrop may still be visible.
     public var declaresOpaque: Bool
+    /// Whether all this node draws is an outline around its edge, with nothing in the middle.
+    ///
+    /// SwiftUI draws a bordered text field as two layers — the fill underneath and a rounded-rect
+    /// *stroke* on top, the second with no background colour at all. Described as a rectangle that
+    /// draws, the stroke is a solid slab exactly the size of the field, painted after it. Measured on a
+    /// four-field form: the wireframe had four grey blocks of 1114×160 and not one orange input, and
+    /// the grey came to 712,960 pixels — four times the product, to the pixel.
+    ///
+    /// Two things follow from it, and both are wrong without it. The node is **stroked**, so the middle
+    /// is left for what it surrounds; and it is never an opaque cover, because an outline hides nothing.
+    public var drawsBorderOnly: Bool
     public var children: [ViewSnapshot]
 
     public init(
@@ -36,6 +47,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         color: Color? = nil,
         clipsToBounds: Bool = false,
         declaresOpaque: Bool = false,
+        drawsBorderOnly: Bool = false,
         children: [ViewSnapshot] = []
     ) {
         self.frame = frame
@@ -45,6 +57,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         self.color = color
         self.clipsToBounds = clipsToBounds
         self.declaresOpaque = declaresOpaque
+        self.drawsBorderOnly = drawsBorderOnly
         self.children = children
     }
 }

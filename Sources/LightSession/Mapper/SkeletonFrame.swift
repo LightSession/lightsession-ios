@@ -132,3 +132,18 @@ public func skeletonColorHex(red: Double, green: Double, blue: Double, alpha: Do
     let rgb = String(format: "%02X%02X%02X", r, g, b)
     return a == 255 ? "#\(rgb)" : "#" + String(format: "%02X", a) + rgb
 }
+
+extension SkeletonFrame {
+    /// The kinds in this frame and how many of each, for a log line worth reading.
+    ///
+    /// A wireframe that comes out wrong is almost always wrong about *what it found*, not about where
+    /// it drew it — so the count per kind is the first thing to know and was the thing missing when a
+    /// SwiftUI sheet with four fields and a button reported two rectangles.
+    public var nodeSummary: String {
+        var counts: [String: Int] = [:]
+        for node in nodes { counts[node.kind.rawValue, default: 0] += 1 }
+        return counts.sorted { $0.key < $1.key }
+            .map { "\($0.key.lowercased()):\($0.value)" }
+            .joined(separator: " ")
+    }
+}

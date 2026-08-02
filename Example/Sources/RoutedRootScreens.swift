@@ -17,7 +17,7 @@ struct RoutedRootScreens: View {
 
     @State private var route = Route.loading
     @State private var path = NavigationPath()
-boa    @State private var sheetUp = false
+    @State private var sheetUp = false
 
     var body: some View {
         Group {

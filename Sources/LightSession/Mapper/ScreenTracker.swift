@@ -85,6 +85,18 @@ final class ScreenTracker {
     private var pendingScreenshot: DispatchWorkItem?
     /// Whether the screen was touched since the screenshot was scheduled.
     private var touchedSinceScheduled = false
+    /// Edges whose request is out and has not come back.
+    ///
+    /// Needed once the cache stopped being written before the send: without it, walking A → B → A → B
+    /// faster than the network answers sends the same edge twice, because neither attempt has landed
+    /// yet and the cache is still empty. Cheap, and it empties itself.
+    private var flowsInFlight: Set<Edge> = []
+
+    /// One edge of the graph, for the in-flight set.
+    private struct Edge: Hashable {
+        let from: String
+        let to: String
+    }
 
     init(
         config: LightSessionConfig,
@@ -500,8 +512,9 @@ final class ScreenTracker {
         // graph has no edge from nowhere.
         onScreenChange?(previous, full, kind, transition)
 
-        if let previous, previous != full, !cache.hasFlow(from: previous, to: full) {
-            cache.recordFlow(from: previous, to: full)
+        if let previous, previous != full,
+           !cache.hasFlow(from: previous, to: full),
+           flowsInFlight.insert(Edge(from: previous, to: full)).inserted {
             sender.send(
                 flow: FlowReport(
                     from: previous,
@@ -510,8 +523,18 @@ final class ScreenTracker {
                     appVersionName: appVersionName,
                     appVersionCode: appVersionCode
                 )
-            ) { result in
-                if case .failure(let error) = result {
+            ) { [weak self] result in
+                guard let self else { return }
+                self.flowsInFlight.remove(Edge(from: previous, to: full))
+                switch result {
+                case .success:
+                    // Recorded only once it has landed, which is the same rule the wireframe follows
+                    // and for the same reason its comment gives: caching an upload that did not land
+                    // is how something goes missing permanently. This was the other way round, and an
+                    // edge lost to a failed request was lost for the life of the install — the cache
+                    // said it had been sent and nothing ever asked again.
+                    self.cache.recordFlow(from: previous, to: full)
+                case .failure(let error):
                     LightSessionLog.error("flow \(previous) -> \(full) failed: \(error.localizedDescription)")
                 }
             }
@@ -592,6 +615,29 @@ final class ScreenTracker {
             height: frame.height,
             theme: theme
         )
+        // Logged where the wireframe is *built*, not where it is sent. A screen that comes out wrong
+        // comes out wrong here, and on a run where the upload is failing this line is the only one that
+        // says what was found: four fields and a button reporting two nodes points straight at the
+        // reading, while "wireframe sent" says nothing at all.
+        LightSessionLog.debug(
+            "wireframe built: \(screen) \(frame.width)x\(frame.height) "
+                + "\(frame.nodes.count) node(s) \(frame.nodeSummary)"
+        )
+
+        // Then every node, in order. Verbose-only, and worth the noise: a wireframe that comes out wrong
+        // is almost always a *painting* problem rather than a reading one, and the order is the only
+        // thing that shows it. The bug that earned this line built twenty-five nodes for a form and
+        // rendered three colours, because the sheet's own background was emitted second-to-last and the
+        // renderer paints in the order it receives — every field under a rectangle the size of the
+        // screen. The summary above said "25 node(s)" and looked healthy. This said which one.
+        for (index, node) in frame.nodes.enumerated() {
+            LightSessionLog.debug(
+                "  node[\(index)] \(node.kind.rawValue) \(node.left),\(node.top) "
+                    + "\(node.right - node.left)x\(node.bottom - node.top) "
+                    + "color=\(node.color ?? "-") stroke=\(node.stroke)"
+            )
+        }
+
         let state = cache.state(forCapture: compositeId)
         // Set before the upload rather than after it: this is what a heatmap anchors to, and the capture
         // exists server-side under this id whether or not *this* run was the one that sent it. Waiting for
@@ -618,7 +664,7 @@ final class ScreenTracker {
                 switch result {
                 case .success:
                     self?.cache.recordWireframe(forCapture: compositeId)
-                    LightSessionLog.debug("wireframe sent: \(screen) (\(frame.width)x\(frame.height))")
+                    LightSessionLog.debug("wireframe sent: \(screen)")
                 case .failure(let error):
                     // Not cached on failure, so the next visit tries again. Caching an upload that did
                     // not land is how a screen goes missing permanently.

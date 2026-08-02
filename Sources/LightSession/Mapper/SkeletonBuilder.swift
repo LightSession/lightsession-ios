@@ -174,8 +174,9 @@ public enum SkeletonBuilder {
                     kind: node.kind,
                     color: wireColor(for: node),
                     // Containers outline; everything else fills. A filled container hides its
-                    // children, and the children are the screen.
-                    stroke: node.kind == .container
+                    // children, and the children are the screen. A layer that draws only a border is
+                    // the same case arriving by another route — see `ViewSnapshot.drawsBorderOnly`.
+                    stroke: node.kind == .container || node.drawsBorderOnly
                 )
             )
         }

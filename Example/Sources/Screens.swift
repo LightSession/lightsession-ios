@@ -79,6 +79,10 @@ final class HubViewController: UIViewController {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: CoversScreens())
             }),
+            Route("richsheet", "A sheet with a whole form in it", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: RichSheetScreens())
+            }),
             Route("sheetreturn", "A sheet, and what comes after it", {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: SheetReturnScreens())
