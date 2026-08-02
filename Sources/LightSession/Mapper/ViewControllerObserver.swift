@@ -194,7 +194,8 @@ extension UIViewController {
     ///
     /// A container's `viewDidAppear` fires alongside its child's, and the child is the screen. Alerts
     /// and action sheets are parts of the screen that presented them, which is what the sub-screen
-    /// mechanism is for — the tracker names them `Parent › Alert` rather than as screens of their own.
+    /// mechanism is for — the tracker intercepts them before this classification and names them
+    /// `Parent › alert-…` on the modal layer, rather than as screens of their own.
     var isLightSessionContainer: Bool {
         self is UINavigationController
             || self is UITabBarController

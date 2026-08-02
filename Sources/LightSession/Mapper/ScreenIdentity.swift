@@ -67,12 +67,101 @@ public enum ScreenIdentity {
     /// would make them different nodes for no reason a user could see.
     public static let subScreenSeparator = " › "
 
+    /// A string fit to become part of a screen name, or nil.
+    ///
+    /// The same rules as the Android SDK's `SubScreens.sanitize`, for the same reasons. Screen names
+    /// are keys — the server rows a screen by name, the device caches by a hash of it — so the same
+    /// part has to produce a byte-identical string every time: whitespace is collapsed rather than
+    /// trusted, because a label wrapped across two lines arrives with a newline in it. And anything
+    /// much longer than a label means the caller grabbed body text, which is per-user — "Delete Dr.
+    /// Silva?" would mint a screen per doctor. Truncating would keep that bug and hide it, so an
+    /// over-long label is rejected outright.
+    public static func subScreenLabel(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let collapsed = raw
+            .replacingOccurrences(of: subScreenSeparator, with: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !collapsed.isEmpty, collapsed.count <= 32 else { return nil }
+        return collapsed
+    }
+
+    /// `Parent › Part › Part`, innermost last.
+    ///
+    /// Plural because the parts are layers, not alternatives — the shape this replaced on Android was
+    /// measured wrong there: a dialog *replaced* the tab it was raised from, so the same dialog opened
+    /// from three tabs was one node with three screens' heatmaps piled onto it. On iOS the layers are
+    /// the declared part and the modal; tabs never appear here because a real iOS tab is its own view
+    /// controller and already a whole screen.
+    ///
+    /// A part that merely repeats the name built so far is dropped — see `isRedundantPart` — which is
+    /// also what keeps a modal named like the panel it covers from stuttering: `Filter › Filter`
+    /// folds to `Filter`.
+    public static func compose(screen: String, parts: [String]) -> String {
+        var name = screen
+        for part in parts {
+            let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !isRedundantPart(of: name, trimmed) else { continue }
+            name += subScreenSeparator + trimmed
+        }
+        return name
+    }
+
     /// `Parent › Part`, or just the parent when there is no part.
     public static func compose(screen: String, subScreen: String?) -> String {
-        guard let sub = subScreen?.trimmingCharacters(in: .whitespacesAndNewlines), !sub.isEmpty else {
-            return screen
+        compose(screen: screen, parts: [subScreen ?? ""])
+    }
+
+    /// Whether a part only repeats the leaf of the name built so far.
+    ///
+    /// The Android SDK's rule, spelling for spelling: the leaf is what follows the last route slash or
+    /// the last separator, and `home_feed` repeating as `Home Feed` is still a repeat.
+    static func isRedundantPart(of name: String, _ part: String) -> Bool {
+        let leaf = name
+            .components(separatedBy: "/").last!
+            .components(separatedBy: subScreenSeparator).last!
+        if leaf.caseInsensitiveCompare(part) == .orderedSame { return true }
+        func folded(_ s: String) -> String {
+            s.lowercased()
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "-", with: "")
         }
-        return screen + subScreenSeparator + sub
+        return folded(leaf) == folded(part)
+    }
+
+    /// A name for an alert that stays the same every time that alert opens.
+    ///
+    /// The trap is the obvious answer, and it is the one the Android SDK documented before this: the
+    /// alert's title is right there, and naming the part after it means "Delete Dr. Silva?" and
+    /// "Delete Dr. Souza?" become two screens — a list of two hundred doctors becomes two hundred
+    /// screens. Content cannot be the identity, so no text the alert displays is read here at all.
+    ///
+    /// What is read instead, in order:
+    ///
+    ///  * an `accessibilityIdentifier` the app set on the alert's view — the developer naming the
+    ///    thing, which is fixed by definition and the way out of every collision below;
+    ///  * the alert's **structure**: presentation style, each action's style in order, and the field
+    ///    count. Stable across data changes, different for structurally different alerts, and blind
+    ///    to what any of it says. Two alerts with the same shape — title, message, two buttons is a
+    ///    common one — collide onto one node, and that is the right way to be wrong: a collision
+    ///    merges two parts and is visible, where content-naming splits one part into hundreds and
+    ///    is not.
+    public static func alertName(
+        identifier: String?,
+        styleRaw: Int,
+        actionStyleRaws: [Int],
+        textFieldCount: Int
+    ) -> String {
+        if let named = subScreenLabel(identifier) { return named }
+        var hash: Int64 = 17
+        func mix(_ value: Int) { hash = hash &* 31 &+ Int64(value) }
+        mix(styleRaw)
+        mix(actionStyleRaws.count)
+        for raw in actionStyleRaws { mix(raw) }
+        mix(textFieldCount)
+        return "alert-" + String(format: "%06x", hash & 0xFFFFFF)
     }
 
     /// The composite the SDK sends as `screenId`.

@@ -27,7 +27,14 @@ final class ScreenTracker {
     /// The screen the app is on, as a bare name — no sub-screen.
     private var currentScreen: String?
     /// The part of the current screen that is a place of its own, if any.
-    private var currentSubScreen: String?
+    /// The parts of the current screen in view, as two fixed layers: what the app declared, then the
+    /// modal over it. Layers rather than one slot — with one slot an alert would replace the declared
+    /// panel it was raised over, and the map would lose where the person actually was. Tabs have no
+    /// layer here on purpose: a real iOS tab is its own view controller and already a whole screen.
+    private var declaredSubScreen: String?
+    private var modalSubScreen: String?
+    /// The alert the modal layer belongs to, so only its own dismissal clears it.
+    private weak var modalAlert: UIViewController?
     /// What was last reported to the server, including any sub-screen. What flows are drawn between.
     private var lastReported: String?
     private var hostHasReported = false
@@ -166,7 +173,8 @@ final class ScreenTracker {
             ViewControllerObserver.onWillDisappear = { [weak self] controller in
                 self?.screenIsLeaving(controller)
             }
-            ViewControllerObserver.onDisappear = { [weak self] _ in
+            ViewControllerObserver.onDisappear = { [weak self] controller in
+                self?.alertLeft(controller)
                 self?.somethingLeftTheScreen()
             }
             ViewControllerObserver.install()
@@ -192,6 +200,14 @@ final class ScreenTracker {
     // MARK: - Screen sources
 
     private func observed(_ controller: UIViewController) {
+        // An alert first, before the roles: by class it is a container and would be dropped in
+        // silence — which is what used to happen, while this file's own documentation claimed the
+        // tracker named alerts `Parent › Alert`. Now it does, as the modal layer.
+        if let alert = controller as? UIAlertController {
+            alertAppeared(alert)
+            return
+        }
+
         let typeName = NSStringFromClass(type(of: controller))
         let name = ScreenIdentity.screenName(fromTypeName: typeName)
         let isHosting = controller.isLightSessionHostingController
@@ -263,6 +279,44 @@ final class ScreenTracker {
     /// between two names for one screen — a navigation the user never made, which is the exact bug
     /// the host-report grace exists to avoid. So nothing is reported until there is an answer: now if
     /// the title is there, after the same short grace if it is not.
+    /// An alert opening is a part of the current screen coming into view — the same event a dialog
+    /// window opening is on Android, where it has always been reported. It rides the modal layer:
+    /// `Screen › alert-…`, its own node with its own wireframe and heatmap, stacked over whatever
+    /// part was already declared.
+    ///
+    /// The name never reads the alert's text — see `ScreenIdentity.alertName` for what it reads
+    /// instead and why per-user content cannot be an identity. That rule is what keeps this out of
+    /// the trap the platform's unreadable names set elsewhere: an alert is UIKit, its *structure* is
+    /// readable, and structure is all that is asked for.
+    private func alertAppeared(_ alert: UIAlertController) {
+        guard let screen = currentScreen else {
+            LightSessionLog.debug("an alert appeared before any screen; not a part of anything yet")
+            return
+        }
+        modalAlert = alert
+        modalSubScreen = ScreenIdentity.alertName(
+            identifier: alert.view.accessibilityIdentifier,
+            styleRaw: alert.preferredStyle.rawValue,
+            actionStyleRaws: alert.actions.map { $0.style.rawValue },
+            textFieldCount: alert.textFields?.count ?? 0
+        )
+        report(screen: screen, kind: .uiKit, transition: "subscreen")
+    }
+
+    /// The other half: only the tracked alert's own dismissal clears the layer.
+    ///
+    /// Identity, not class — a second alert replacing the first must not have its layer wiped by the
+    /// first one's late teardown. The recompose happens here, synchronously, rather than waiting for
+    /// the deferred re-read: the re-read still runs and lands on the same name, which `report` drops
+    /// as a repeat.
+    private func alertLeft(_ controller: UIViewController) {
+        guard controller === modalAlert else { return }
+        modalAlert = nil
+        modalSubScreen = nil
+        guard let screen = currentScreen else { return }
+        report(screen: screen, kind: .uiKit, transition: "subscreen")
+    }
+
     /// Re-reads what is on screen after something goes away.
     ///
     /// The signal a sheet does not otherwise give. A SwiftUI sheet is a page sheet, so the screen it
@@ -478,20 +532,25 @@ final class ScreenTracker {
     }
 
     func setSubScreen(_ name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let screen = currentScreen else { return }
-        currentSubScreen = trimmed
-        report(screen: screen, subScreen: trimmed, kind: .uiKit, transition: "subscreen")
+        // The same sanitising a read label gets on Android, because the declared string is the one
+        // most likely to arrive built out of the data on display. Rejected loudly rather than
+        // truncated: a truncated data-name is still a screen per record, just harder to notice.
+        guard let label = ScreenIdentity.subScreenLabel(name) else {
+            LightSessionLog.error("setSubScreen(\"\(name)\") is not a label; ignored")
+            return
+        }
+        guard let screen = currentScreen else { return }
+        declaredSubScreen = label
+        report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
     func clearSubScreen(_ name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         // Only the part that is actually showing may clear itself. Without this check a modal closing
         // late clears a different part that has since opened, and the graph records a screen the user
         // never returned to.
-        guard currentSubScreen == trimmed, let screen = currentScreen else { return }
-        currentSubScreen = nil
-        report(screen: screen, subScreen: nil, kind: .uiKit, transition: "subscreen")
+        guard declaredSubScreen == ScreenIdentity.subScreenLabel(name), let screen = currentScreen else { return }
+        declaredSubScreen = nil
+        report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
     // MARK: - The sequence
@@ -499,18 +558,22 @@ final class ScreenTracker {
     private func enter(screen name: String, kind: ScreenIdentity.Kind, transition: String) {
         // Entering a screen ends whatever part of the previous one was open. Keeping it would compose
         // the new screen with the old screen's modal.
-        currentSubScreen = nil
+        declaredSubScreen = nil
+        modalSubScreen = nil
+        modalAlert = nil
         currentScreen = name
-        report(screen: name, subScreen: nil, kind: kind, transition: transition)
+        report(screen: name, kind: kind, transition: transition)
     }
 
     private func report(
         screen: String,
-        subScreen: String?,
         kind: ScreenIdentity.Kind,
         transition: String
     ) {
-        let full = ScreenIdentity.compose(screen: screen, subScreen: subScreen)
+        let full = ScreenIdentity.compose(
+            screen: screen,
+            parts: [declaredSubScreen, modalSubScreen].compactMap { $0 }
+        )
         // The same screen reported twice is the normal case, not an error: a navigator re-emits state on
         // every re-render, and `viewDidAppear` fires again when a modal above it closes.
         guard full != lastReported else { return }

@@ -92,3 +92,106 @@ final class ReportedScreenKindTests: XCTestCase {
         XCTAssertEqual(ScreenIdentity.Kind(rawValue: "FLUTTER"), .flutter)
     }
 }
+
+/// The rules that decide what a part of a screen is *called*, mirrored from the Android SDK's
+/// `SubScreensTest` question for question — the two platforms write `Parent › Part` into one graph,
+/// and a drift in folding or sanitising shows up as one platform's nodes quietly failing to match
+/// the other's.
+final class SubScreenPartsTests: XCTestCase {
+
+    // ------------------------------------------------------------- labels
+
+    func testALabelIsTrimmedAndItsWhitespaceCollapsed() {
+        // A label that wraps arrives with the newline in it. Left alone, "Recent\nActivity" and
+        // "Recent Activity" are two different screen names for one part.
+        XCTAssertEqual(ScreenIdentity.subScreenLabel("  Recent\n  Activity "), "Recent Activity")
+        XCTAssertEqual(ScreenIdentity.subScreenLabel("Overview"), "Overview")
+    }
+
+    func testAnEmptyOrBlankLabelIsNotALabel() {
+        XCTAssertNil(ScreenIdentity.subScreenLabel(""))
+        XCTAssertNil(ScreenIdentity.subScreenLabel("   \n "))
+        XCTAssertNil(ScreenIdentity.subScreenLabel(nil))
+    }
+
+    func testAnOverLongLabelIsRejectedRatherThanTruncated() {
+        // Long means the caller grabbed body text, and body text is per-user: truncating "Delete
+        // Dr. Silva from the cardiology department?" would keep the screen-per-record bug and hide it.
+        XCTAssertNil(ScreenIdentity.subScreenLabel("Delete Dr. Silva from the cardiology department?"))
+    }
+
+    func testALabelCannotSmuggleInTheSeparator() {
+        XCTAssertEqual(ScreenIdentity.subScreenLabel("a › b"), "a b")
+    }
+
+    // ------------------------------------------------------------- layers
+
+    func testPartsNestInOrder() {
+        XCTAssertEqual(
+            ScreenIdentity.compose(screen: "Login", parts: ["filters", "alert-4fab23"]),
+            "Login › filters › alert-4fab23"
+        )
+    }
+
+    func testNoPartsLeaveTheScreenAlone() {
+        XCTAssertEqual(ScreenIdentity.compose(screen: "Login", parts: []), "Login")
+    }
+
+    func testAPartThatRepeatsTheOneBeneathFoldsIntoIt() {
+        // A modal named like the panel it covers must not stutter: the redundancy rule reads the
+        // name built so far, layer by layer, so `Filter › Filter` never happens.
+        XCTAssertEqual(
+            ScreenIdentity.compose(screen: "doctors", parts: ["Filter", "Filter"]),
+            "doctors › Filter"
+        )
+    }
+
+    func testAPartThatRepeatsTheScreenAddsNothing() {
+        XCTAssertEqual(ScreenIdentity.compose(screen: "home", parts: ["Home"]), "home")
+        // The leaf of a route, and spelling variants, count as repeats — the Android rule.
+        XCTAssertEqual(ScreenIdentity.compose(screen: "app/home_feed", parts: ["Home Feed"]), "app/home_feed")
+    }
+
+    func testAPartThatOnlyResemblesTheScreenIsKept() {
+        XCTAssertEqual(
+            ScreenIdentity.compose(screen: "home", parts: ["Home Feed"]),
+            "home › Home Feed"
+        )
+    }
+
+    // ------------------------------------------------------------- alerts
+
+    func testAnIdentifierNamesTheAlert() {
+        XCTAssertEqual(
+            ScreenIdentity.alertName(identifier: "confirm-delete", styleRaw: 1, actionStyleRaws: [0, 1], textFieldCount: 0),
+            "confirm-delete"
+        )
+    }
+
+    func testAnAlertKeepsOneNameWhenOnlyItsDataWouldDiffer() {
+        // The Android measurement, restated: the name reads no text at all, so nothing the alert
+        // displays can split it into a screen per record.
+        let a = ScreenIdentity.alertName(identifier: nil, styleRaw: 1, actionStyleRaws: [0, 1], textFieldCount: 0)
+        let b = ScreenIdentity.alertName(identifier: nil, styleRaw: 1, actionStyleRaws: [0, 1], textFieldCount: 0)
+        XCTAssertEqual(a, b)
+        XCTAssertTrue(a.hasPrefix("alert-"), "no identifier, so it falls back to structure: \(a)")
+    }
+
+    func testAStructurallyDifferentAlertGetsADifferentName() {
+        let confirm = ScreenIdentity.alertName(identifier: nil, styleRaw: 1, actionStyleRaws: [0, 1], textFieldCount: 0)
+        let withField = ScreenIdentity.alertName(identifier: nil, styleRaw: 1, actionStyleRaws: [0, 1], textFieldCount: 1)
+        let sheet = ScreenIdentity.alertName(identifier: nil, styleRaw: 0, actionStyleRaws: [0, 1], textFieldCount: 0)
+        XCTAssertNotEqual(confirm, withField)
+        XCTAssertNotEqual(confirm, sheet)
+    }
+
+    func testAnOverLongIdentifierFallsBackToStructure() {
+        let name = ScreenIdentity.alertName(
+            identifier: "an identifier long enough to be body text rather than a name",
+            styleRaw: 1,
+            actionStyleRaws: [0],
+            textFieldCount: 0
+        )
+        XCTAssertTrue(name.hasPrefix("alert-"), "got \(name)")
+    }
+}

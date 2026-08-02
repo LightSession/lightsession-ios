@@ -128,9 +128,10 @@ final class EmbeddedChildViewController: UIViewController {
 
 /// An alert over a screen.
 ///
-/// `UIAlertController` is dropped by class: an alert is a part of the screen that raised it, which is
-/// what the sub-screen mechanism describes as `Parent › Alert`. Reported as a screen it would be a node
-/// with no way back, since dismissing an alert navigates nowhere.
+/// `UIAlertController` is never a screen of its own — dismissing an alert navigates nowhere, so a node
+/// for it would have no way back. It is a *part* of the screen that raised it, and the tracker reports
+/// it on the modal layer: `AlertOverScreen › alert-…`, named from the alert's structure and never from
+/// its text, which is per-user. Closing it returns to the plain screen name.
 final class AlertOverScreen: UIViewController {
 
     override func viewDidLoad() {
