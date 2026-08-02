@@ -845,7 +845,7 @@ final class ScreenTracker {
         screenshotOwed = nil
         cancelPendingScreenshot()
         LightSessionLog.debug("screenshot of \(owed.screen) taken on departure: the quiet period never elapsed")
-        captureScreenshot(screen: owed.screen, kind: owed.kind, window: window)
+        captureScreenshot(screen: owed.screen, kind: owed.kind, window: window, alsoMaskedBy: owed.snapshot)
     }
 
     /// Renders and uploads the screenshot, reading the screen as it is now.
@@ -856,11 +856,18 @@ final class ScreenTracker {
     ///   tree already belongs to the next one — masking one screen's pixels with another screen's
     ///   rectangles is how text goes out uncovered. Nil means the hierarchy is the truth, which it is
     ///   everywhere else.
+    /// - Parameter alsoMaskedBy: a second tree whose text is covered as well. The departure capture
+    ///   passes the settle-time tree here, and the reason is measured: popping a screen while it has
+    ///   something presented over it tears the navigation title out of the model tree while the
+    ///   committed pixels still show it — the current tree said the screen held no title, the picture
+    ///   held one, and the title went out legible. The settle-time tree still knows that rectangle. A
+    ///   union can only add covers, and a mask too many is the direction this SDK is allowed to err in.
     private func captureScreenshot(
         screen: String,
         kind: ScreenIdentity.Kind,
         window: UIWindow,
-        describedBy: ViewSnapshot? = nil
+        describedBy: ViewSnapshot? = nil,
+        alsoMaskedBy: ViewSnapshot? = nil
     ) {
         let snapshot = describedBy ?? window.lightSessionContent
         guard let frame = SkeletonBuilder.build(
@@ -888,7 +895,9 @@ final class ScreenTracker {
         // must happen there (the pixels are about to change), while the JPEG encode is pure arithmetic
         // that would spend those milliseconds blocking the very animation the person just started.
         let policy = ScreenshotRenderer.MaskPolicy(text: config.maskText, images: config.maskImages)
-        guard let image = ScreenshotRenderer.capture(window: window, snapshot: snapshot, policy: policy) else {
+        guard let image = ScreenshotRenderer.capture(
+            window: window, snapshot: snapshot, alsoMaskedBy: alsoMaskedBy, policy: policy
+        ) else {
             LightSessionLog.debug("\(screen) could not be rendered")
             return
         }

@@ -30,9 +30,14 @@ enum ScreenshotRenderer {
     ///   - scale: pixels per point. Defaults to the screen's own, which is what a screen-map capture wants.
     ///     A replay frame passes something smaller: it is watched in a small player, and full resolution
     ///     costs bytes nobody looks at.
+    /// - Parameter alsoMaskedBy: a second tree whose covered rectangles are filled as well. For a
+    ///   capture taken mid-transition the current tree can have lost views the committed pixels still
+    ///   show — see the departure capture — and only an earlier reading of the same screen remembers
+    ///   where they were.
     static func capture(
         window: UIWindow,
         snapshot: ViewSnapshot,
+        alsoMaskedBy: ViewSnapshot? = nil,
         policy: MaskPolicy,
         scale: CGFloat? = nil
     ) -> CGImage? {
@@ -51,7 +56,11 @@ enum ScreenshotRenderer {
             window.drawHierarchy(in: bounds, afterScreenUpdates: false)
 
             cg.setFillColor(UIColor.systemGray3.cgColor)
-            for rect in maskRects(in: snapshot, policy: policy, bounds: bounds) {
+            var rects = maskRects(in: snapshot, policy: policy, bounds: bounds)
+            if let alsoMaskedBy {
+                rects += maskRects(in: alsoMaskedBy, policy: policy, bounds: bounds)
+            }
+            for rect in rects {
                 cg.fill(rect)
             }
         }
