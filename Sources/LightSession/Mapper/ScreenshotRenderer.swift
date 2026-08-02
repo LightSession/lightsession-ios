@@ -57,6 +57,63 @@ enum ScreenshotRenderer {
         }
     }
 
+    /// `frame` with its palette colours replaced by the ones on screen, or `frame` unchanged.
+    ///
+    /// Draws the window exactly as `capture` does, **mask included**, and samples that rather than the
+    /// raw screen. Sampling unmasked pixels would give a text block the colour of its paper instead of
+    /// the mask's grey, which is prettier and is a second privacy decision to keep in step with
+    /// `MaskPolicy` forever. Following the mask needs no such decision: the wireframe can never show a
+    /// colour the screenshot does not already show. This is the choice the Android SDK made and the
+    /// reasoning is its own.
+    ///
+    /// Degrades to `frame` at every failure — no context, no buffer, a window with no area. A wireframe
+    /// in template colours is what shipped before this existed.
+    ///
+    /// - Important: geometry and pixels have to describe the same moment. Called from the settle
+    ///   callback, which is where the layout has stopped changing; drawing earlier would colour a
+    ///   settled wireframe from an unsettled frame.
+    static func recolour(
+        _ frame: SkeletonFrame,
+        window: UIWindow,
+        snapshot: ViewSnapshot,
+        policy: MaskPolicy
+    ) -> SkeletonFrame {
+        assert(Thread.isMainThread, "sampling draws the view hierarchy")
+
+        // The colours are only meaningless because the rectangles are coarse. If the walk ever starts
+        // emitting one per character, sampling would paint the text back — so this refuses rather than
+        // asks. See `Recolour.glyphSizedNodes`.
+        let glyphs = Recolour.glyphSizedNodes(in: frame)
+        if glyphs > 0 {
+            LightSessionLog.debug(
+                "\(glyphs) node(s) are glyph-sized; keeping palette colours, since a colour per "
+                    + "character would reconstruct the text"
+            )
+            return frame
+        }
+
+        let bounds = window.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return frame }
+
+        let sampled = BitmapRenderer.withPixels(
+            size: bounds.size,
+            scale: window.screen.scale,
+            draw: { cg in
+                window.drawHierarchy(in: bounds, afterScreenUpdates: false)
+                cg.setFillColor(UIColor.systemGray3.cgColor)
+                for rect in maskRects(in: snapshot, policy: policy, bounds: bounds) {
+                    cg.fill(rect)
+                }
+            },
+            sample: { pixels in Recolour.apply(frame, sampling: pixels) }
+        )
+        guard let sampled else {
+            LightSessionLog.debug("no pixels to sample colours from; keeping the palette")
+            return frame
+        }
+        return sampled
+    }
+
     /// Pixels as a JPEG. Safe off the main thread: nothing here reads a view.
     ///
     /// - Parameter quality: not a quality decision but a size one — these are uploaded from a user's

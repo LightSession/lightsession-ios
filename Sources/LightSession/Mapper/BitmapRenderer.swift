@@ -60,5 +60,52 @@ enum BitmapRenderer {
 
         return context.makeImage()
     }
+
+    /// Draws the same way, then hands the buffer to `sample` instead of making an image.
+    ///
+    /// Two things make this worth existing next to `image`. The buffer belongs to the context, so it is
+    /// only valid while the context is alive — a function scope is the only honest way to say that, and
+    /// returning the pointer would be a dangling one the moment the caller used it. And the alternative,
+    /// `CGImage.dataProvider?.data`, copies: around 12 MB for a screen, to read a sixteenth of it.
+    ///
+    /// Returns nil for the same reason `image` does, plus one more: a context CoreGraphics gave us with
+    /// no accessible buffer. Callers degrade to palette colours rather than treating it as a failure.
+    static func withPixels<Result>(
+        size: CGSize,
+        scale: CGFloat,
+        draw: (CGContext) -> Void,
+        sample: (ContextPixels) -> Result
+    ) -> Result? {
+        let width = Int((size.width * scale).rounded())
+        let height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0 else { return nil }
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: deviceRGB,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { return nil }
+
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+
+        UIGraphicsPushContext(context)
+        draw(context)
+        UIGraphicsPopContext()
+
+        guard let data = context.data else { return nil }
+        return sample(
+            ContextPixels(
+                width: width,
+                height: height,
+                bytesPerRow: context.bytesPerRow,
+                base: data.assumingMemoryBound(to: UInt8.self)
+            )
+        )
+    }
 }
 #endif

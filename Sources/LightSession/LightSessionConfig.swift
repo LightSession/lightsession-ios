@@ -81,6 +81,17 @@ public struct LightSessionConfig: Sendable {
     /// server-side, in separate slots, so turning this off does not lose the wireframe.
     public var captureRealScreens: Bool
 
+    /// Whether a wireframe's colours are read off the screen instead of coming from the palette.
+    ///
+    /// On by default, which matches the Android SDK — the two platforms feed one screen map, and a
+    /// wireframe whose colours depend on which phone produced it is a graph nobody can read across.
+    ///
+    /// The trade is worth stating, because it is a real one. Sampled, a wireframe is a low-fidelity
+    /// picture of the screen: a white text field comes back white. From the palette, it is a typed
+    /// diagram: that field is orange because it is an input, and the colour is the only thing saying so.
+    /// Turn this off to get the legend back. See `Recolour`.
+    public var sampleWireframeColours: Bool
+
     /// Cover text before a capture leaves the device. **On by default**, and worth leaving on.
     public var maskText: Bool
 
@@ -95,6 +106,7 @@ public struct LightSessionConfig: Sendable {
         swiftUITitleNaming: SwiftUITitleNaming? = SwiftUITitleNaming(),
         reportedScreenKind: ScreenIdentity.Kind = .swiftUI,
         captureRealScreens: Bool = true,
+        sampleWireframeColours: Bool = true,
         maskText: Bool = true,
         maskImages: Bool = false,
         trackInteractions: Bool = true,
@@ -110,6 +122,7 @@ public struct LightSessionConfig: Sendable {
         self.swiftUITitleNaming = swiftUITitleNaming
         self.reportedScreenKind = reportedScreenKind
         self.captureRealScreens = captureRealScreens
+        self.sampleWireframeColours = sampleWireframeColours
         self.maskText = maskText
         self.maskImages = maskImages
         self.trackInteractions = trackInteractions

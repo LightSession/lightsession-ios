@@ -597,7 +597,7 @@ final class ScreenTracker {
         // `UIWindow.lightSessionContent`.
         let snapshot = window.lightSessionContent
         let scale = Double(window.screen.scale)
-        guard let frame = SkeletonBuilder.build(
+        guard let built = SkeletonBuilder.build(
             root: snapshot,
             scale: scale,
             background: window.lightSessionBackground
@@ -605,6 +605,18 @@ final class ScreenTracker {
             LightSessionLog.debug("\(screen) has no drawable area; capture dropped")
             return
         }
+
+        // Read the real colours off the screen, if asked to. Here rather than anywhere later because this
+        // is the settle callback: the layout has stopped moving, so the geometry and the pixels describe
+        // the same moment. It degrades to the palette on its own, so there is no failure to handle.
+        let frame = config.sampleWireframeColours
+            ? ScreenshotRenderer.recolour(
+                built,
+                window: window,
+                snapshot: snapshot,
+                policy: ScreenshotRenderer.MaskPolicy(text: config.maskText, images: config.maskImages)
+            )
+            : built
 
         let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
         let compositeId = ScreenIdentity.compositeId(
