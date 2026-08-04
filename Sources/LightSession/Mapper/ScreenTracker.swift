@@ -1,3 +1,10 @@
+//
+//  ScreenTracker.swift
+//  LightSession
+//
+//  Author: thisames
+//
+
 #if canImport(UIKit)
 import UIKit
 
