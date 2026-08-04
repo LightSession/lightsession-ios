@@ -1,5 +1,17 @@
 import Foundation
 
+/// What a window is showing, reduced to two facts: how much is drawn, and where.
+///
+/// `Equatable` is the API. The settle detector keeps the previous one and asks whether anything
+/// changed — a new view arriving changes `count`, a slide in progress changes `geometry`, and a
+/// screen at rest changes neither.
+public struct ContentSignature: Equatable, Sendable {
+    /// Views that put ink on the screen.
+    public let count: Int
+    /// A hash of those views' frames, in whole points.
+    public let geometry: Int64
+}
+
 /// Turns a view hierarchy into the geometry the server draws.
 ///
 /// Pure, and takes a [ViewSnapshot] rather than a `UIView`, so every rule below is stated where a
@@ -71,16 +83,47 @@ public enum SkeletonBuilder {
     /// is made of nothing else. Excluding it meant such a screen was declared empty forever, waited
     /// out its timeout, and uploaded a blank frame.
     public static func contentCount(_ node: ViewSnapshot) -> Int {
-        guard isVisible(node) else { return 0 }
-        let own: Int
+        contentSignature(node).count
+    }
+
+    /// What is drawn *and where it is* — the settle detector's whole stop condition.
+    ///
+    /// The count alone is not enough, and the miss was measured, not imagined. During a
+    /// react-native-screens push both screens are already in the hierarchy and nothing joins or leaves
+    /// for the length of the slide — the views only *move*. A count-based settle held stable three
+    /// frames into a 350-millisecond animation and photographed the middle of it: the stored wireframe
+    /// of `List` had its rows squeezed into the right half of the frame, with the departing screen
+    /// still occupying the left. UIKit-named screens never hit this because their report arrives at
+    /// `viewDidAppear`, after the slide; a host-reported screen is named at the *start* of one.
+    ///
+    /// So the signature folds in each drawing view's frame, rounded to whole points — presented
+    /// geometry carries sub-pixel noise even at rest, and a hash that never repeats never settles.
+    /// A screen that genuinely never holds still (a spinner) changes its signature every frame and is
+    /// caught by the detector's timeout, exactly as before.
+    public static func contentSignature(_ node: ViewSnapshot) -> ContentSignature {
+        var count = 0
+        var geometry: Int64 = 17
+        fold(node, into: &count, &geometry)
+        return ContentSignature(count: count, geometry: geometry)
+    }
+
+    private static func fold(_ node: ViewSnapshot, into count: inout Int, _ geometry: inout Int64) {
+        guard isVisible(node) else { return }
         switch node.kind {
         case .text, .image, .input, .button, .webView, .card, .unknown:
-            own = 1
+            count += 1
+            for side in [node.frame.left, node.frame.top, node.frame.right, node.frame.bottom] {
+                geometry = geometry &* 31 &+ Int64(side.rounded())
+            }
         case .container:
-            // A container is furniture. Counting it would make every window "settled" immediately.
-            own = 0
+            // A container is furniture. Counting it would make every window "settled" immediately —
+            // and its movement shows through its children's absolute frames, so it has no geometry of
+            // its own to add either.
+            break
         }
-        return own + node.children.reduce(0) { $0 + contentCount($1) }
+        for child in node.children {
+            fold(child, into: &count, &geometry)
+        }
     }
 
     // MARK: - Internals

@@ -26,9 +26,21 @@ public enum ScreenNameSource: Equatable, Sendable {
 public struct ScreenSourcePlan: Equatable, Sendable {
     public let source: ScreenNameSource
 
-    /// Swizzle `viewDidAppear`. False for a host-reporting app: the hook would fire for the hosting
-    /// controller on every SwiftUI transition and report a screen the app has already named better.
+    /// Swizzle `viewDidAppear` to *name screens*. False for a host-reporting app: the hook would fire
+    /// for the hosting controller on every SwiftUI transition and report a screen the app has already
+    /// named better.
     public let observeViewControllers: Bool
+
+    /// Watch appearing controllers for the modal layer — alerts, and React Native's modal host — even
+    /// when they must not be used to name screens.
+    ///
+    /// A separate fact from `observeViewControllers`, and conflating them was a measured hole: with
+    /// the host naming the screens, nothing was watching controllers at all, so `Alert.alert` and RN's
+    /// `Modal` — real UIKit presentations both — never became `Screen › …` parts. Android never had
+    /// this hole because its dialog detection reads windows, not the screen-name source.
+    ///
+    /// True in every plan. Who names the screens says nothing about whether a window can be covered.
+    public let observeModalLayer: Bool
 
     /// Warn, once, if the app looks like SwiftUI and never reports a screen.
     ///
@@ -37,7 +49,12 @@ public struct ScreenSourcePlan: Equatable, Sendable {
     /// which looks like a working SDK to everyone who is not looking at the graph.
     public let adviseIfSilent: Bool
 
-    public init(source: ScreenNameSource, observeViewControllers: Bool, adviseIfSilent: Bool) {
+    public init(
+        source: ScreenNameSource,
+        observeViewControllers: Bool,
+        observeModalLayer: Bool,
+        adviseIfSilent: Bool
+    ) {
         // The two sources cannot both be live. This is an invariant rather than a comment because
         // the Android version of this decision spent nineteen commits reporting a screen twice from
         // two mechanisms, and nothing in the code said that was impossible.
@@ -47,6 +64,7 @@ public struct ScreenSourcePlan: Equatable, Sendable {
         )
         self.source = source
         self.observeViewControllers = observeViewControllers
+        self.observeModalLayer = observeModalLayer
         self.adviseIfSilent = adviseIfSilent
     }
 }
@@ -243,10 +261,30 @@ public func nameForSwiftUIHost(
 // ## Why they all end in the same place
 //
 // What SwiftUI renders is decided by state kept in AttributeGraph, a C++ engine whose nodes are
-// addressed by numeric ids rather than by fields any reflection can enumerate. Reading it would mean
-// calling undocumented C internals, by id, inside somebody else's app, with no contract across
-// releases — and tripping the graph's invariants there is a crash in a customer's app, not a missing
-// feature in ours.
+// addressed by numeric ids rather than by fields any reflection can enumerate.
+//
+// **An earlier version of this paragraph went on to say that reading it would mean calling
+// undocumented C internals "by id", and that was measured wrong.** AttributeGraph exports a bulk
+// description — `AGGraphDescription`, with an `include-values` option, the facility Apple's own
+// tooling reads — so one attribute handle is enough and no per-id navigation is needed. Resolved
+// through `dlsym` (the SDK ships no `.tbd` to link against) and reached by a walk that reads
+// Objective-C ivars as well as `Mirror`, it works: on iOS 26.2 the attribute
+// `UnwrapConditional<ViewDescriptor, _ConditionalContent<…>, X>` names the live branch in `X`, and a
+// run against a real app returned `ManagerRootView` and `NewDoctorView` correctly.
+//
+// It is still not the answer, for reasons that are now numbers rather than principle:
+//
+//  * **Cost.** Measured in a real app, the description reached **16.3 MB** and **5.5 seconds** on the
+//    main thread, growing through the session as the graph accumulates. A three-view toy reported
+//    62 KB and 7 ms, which is why a toy could not have settled this.
+//  * **It names Apple's furniture.** The graph holds SwiftUI's own views beside the app's, and nothing
+//    in the dump says which is which — the same run reported `NavigationStackRepresentableRoot` for
+//    three different screens. A list of known framework names cannot fix that: `FloatingToolbar` and
+//    `FloatingBarContainer` did not exist before iOS 26.
+//  * **Private symbols in somebody else's app.** The App Store review risk lands on the customer.
+//
+// So the wall is real, but it is a *cost and ownership* wall, not an *unreachability* wall. Anyone
+// coming back should know the information is there and what it costs to take.
 //
 // ## What to try if you come back to this
 //
@@ -254,9 +292,28 @@ public func nameForSwiftUIHost(
 //  * A compiler plugin or macro the app opts into, which would see the concrete types at build time.
 //    This trades one line of runtime annotation for a build-time dependency; worth measuring, not
 //    obviously better.
-//  * Detecting the *change* without naming it. The mapper already re-describes the screen on a timer,
-//    so a structural fingerprint would notice Splash becoming Login. It cannot name either of them,
-//    and two nodes called "screen 1" and "screen 2" are worse than one honest annotation.
+//  * Detecting the *change* without naming it, with a structural fingerprint of the skeleton — the
+//    shape standing in for the name, `Screen a3f9c1`. Explored and parked, and the reasoning is worth
+//    keeping because the first version of this bullet dismissed it for the wrong reason: it compared
+//    a fingerprint against an *annotated* screen, and an app that annotates does not need this. The
+//    real baseline is what an unannotated app gets today — one node called `SwiftUI (unnamed)` holding
+//    every screen — and against that, distinguishable nodes with their own wireframes win easily.
+//
+//    Built and tested as a pure function, it survived every trap this codebase has paid for before:
+//    row counts, text lengths, sampled colours and device scale all left the id alone (repeated
+//    sibling shapes collapse, and geometry is excluded — the Android dialog fingerprint measured that
+//    a text node's width *is* its content), while order, nesting and widget mix still separated
+//    screens.
+//
+//    What killed it is not any of that. **Shape is not identity over time.** Edit a layout — add a
+//    banner — and the fingerprint changes, so `analyze` in the server's `graph.rs` finds the old id
+//    missing from the current build and reports the screen as *dead*, while the new shape arrives as a
+//    new screen. The map would announce a deletion every time somebody touched a layout, and any name
+//    a person had attached would be lost. Bumping the app version does not help: it makes the split
+//    legible without making it right.
+//
+//    If it is ever picked up again, the missing piece is not a cleverer hash — it is matching a new
+//    shape against known ones by *similarity*, server side, with a person confirming the merge.
 //
 // Until one of those lands, the app tells us — and the app's own routing value is not a consolation
 // prize. It is the better name: `.login` is what the team calls that screen, and it survives renaming
@@ -359,12 +416,14 @@ public func planScreenSource(
         return ScreenSourcePlan(
             source: .reportedByHost,
             observeViewControllers: false,
+            observeModalLayer: true,
             adviseIfSilent: false
         )
     }
     return ScreenSourcePlan(
         source: .viewControllers,
         observeViewControllers: true,
+        observeModalLayer: true,
         adviseIfSilent: hostsSwiftUI
     )
 }

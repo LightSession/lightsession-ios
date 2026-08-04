@@ -76,6 +76,89 @@ final class SkeletonBuilderTests: XCTestCase {
         XCTAssertEqual(SkeletonBuilder.contentCount(window), 1)
     }
 
+    // MARK: - contentSignature
+
+    /// The React Native push, reduced to one assertion.
+    ///
+    /// A host-reported screen is named when the slide *starts*, and for the length of the slide both
+    /// screens are in the tree — nothing joins, nothing leaves, everything moves. A count-based settle
+    /// called that stable and photographed the middle of the animation: the stored wireframe of `List`
+    /// had its rows squeezed into the right half of the frame. Movement must read as change.
+    func testMovementChangesTheSignatureThoughTheCountHolds() {
+        let sliding = ViewSnapshot(
+            frame: rect(0, 0, 390, 844),
+            kind: .container,
+            children: [ViewSnapshot(frame: rect(200, 60, 380, 90), kind: .text)]
+        )
+        var landed = sliding
+        landed.children[0].frame = rect(16, 60, 196, 90)
+
+        let before = SkeletonBuilder.contentSignature(sliding)
+        let after = SkeletonBuilder.contentSignature(landed)
+        XCTAssertEqual(before.count, after.count, "the slide adds and removes nothing")
+        XCTAssertNotEqual(before, after, "a moved view is a screen that has not settled")
+    }
+
+    /// The other direction: presented geometry carries sub-pixel noise even at rest, and a signature
+    /// that never repeats never settles. Whole points are the identity.
+    func testSubPixelJitterDoesNotChangeTheSignature() {
+        let atRest = ViewSnapshot(
+            frame: rect(0, 0, 390, 844),
+            kind: .container,
+            children: [ViewSnapshot(frame: rect(16, 60, 300, 90), kind: .text)]
+        )
+        var jittered = atRest
+        jittered.children[0].frame = rect(16.2, 59.9, 300.1, 90.2)
+
+        XCTAssertEqual(
+            SkeletonBuilder.contentSignature(atRest),
+            SkeletonBuilder.contentSignature(jittered)
+        )
+    }
+
+    /// A container's own frame animates during a push while its children's window-space frames carry
+    /// the movement. The container contributes nothing directly — same rule as the count — so this
+    /// pins that its children are still walked.
+    func testGeometryIsReadThroughContainers() {
+        let tree = ViewSnapshot(
+            frame: rect(0, 0, 390, 844),
+            kind: .container,
+            children: [
+                ViewSnapshot(
+                    frame: rect(0, 0, 390, 844),
+                    kind: .container,
+                    children: [ViewSnapshot(frame: rect(16, 60, 300, 90), kind: .text)]
+                )
+            ]
+        )
+        var moved = tree
+        moved.children[0].children[0].frame = rect(116, 60, 400, 90)
+
+        XCTAssertNotEqual(
+            SkeletonBuilder.contentSignature(tree),
+            SkeletonBuilder.contentSignature(moved)
+        )
+    }
+
+    func testHiddenContentHasNoGeometryEither() {
+        let shown = ViewSnapshot(
+            frame: rect(0, 0, 390, 844),
+            kind: .container,
+            children: [
+                ViewSnapshot(frame: rect(0, 60, 100, 80), kind: .text),
+                ViewSnapshot(frame: rect(0, 0, 100, 20), kind: .text, isHidden: true),
+            ]
+        )
+        var hiddenMoved = shown
+        hiddenMoved.children[1].frame = rect(50, 0, 150, 20)
+
+        XCTAssertEqual(
+            SkeletonBuilder.contentSignature(shown),
+            SkeletonBuilder.contentSignature(hiddenMoved),
+            "what is not drawn cannot be mid-animation"
+        )
+    }
+
     // MARK: - build
 
     func testFrameDimensionsAreInPixels() {

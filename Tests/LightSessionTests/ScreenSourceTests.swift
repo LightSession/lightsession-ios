@@ -71,6 +71,19 @@ final class ScreenSourceTests: XCTestCase {
             }
         }
     }
+
+    /// The modal layer is watched in every plan, because who names the screens says nothing about
+    /// whether a window can be covered. This was a measured hole, not a hypothetical: in the
+    /// host-reporting plan nothing observed controllers at all, so a React Native app's `Alert.alert`
+    /// and `Modal` — both real UIKit presentations — never became `Screen › …` parts, while the same
+    /// app on Android reported its dialog, because Android's detection reads windows rather than
+    /// riding the screen-name source.
+    func testTheModalLayerIsWatchedInEveryPlan() {
+        for c in allCases {
+            let plan = planScreenSource(hostsSwiftUI: c.hostsSwiftUI, screensReportedByHost: c.reported)
+            XCTAssertTrue(plan.observeModalLayer, "case \(c) would miss alerts and modals")
+        }
+    }
 }
 
 /// What happens to a controller the SDK saw appear.

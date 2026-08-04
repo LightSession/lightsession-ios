@@ -26,15 +26,21 @@ final class ScreenTracker {
     private var plan: ScreenSourcePlan
     /// The screen the app is on, as a bare name — no sub-screen.
     private var currentScreen: String?
-    /// The part of the current screen that is a place of its own, if any.
-    /// The parts of the current screen in view, as two fixed layers: what the app declared, then the
-    /// modal over it. Layers rather than one slot — with one slot an alert would replace the declared
-    /// panel it was raised over, and the map would lose where the person actually was. Tabs have no
-    /// layer here on purpose: a real iOS tab is its own view controller and already a whole screen.
+    /// The parts of the current screen in view, as three fixed layers: what the app declared, then a
+    /// modal host over it, then an alert over both. Layers rather than one slot — with one slot an
+    /// alert would replace the declared panel it was raised over, and the map would lose where the
+    /// person actually was. Tabs have no layer here on purpose: a real iOS tab is its own view
+    /// controller and already a whole screen.
     private var declaredSubScreen: String?
+    /// React Native's `Modal`, which presents a controller of its own while the screen's name stays
+    /// with the JavaScript route underneath. Below the alert: an alert raised from inside the modal
+    /// belongs over it.
+    private var modalHostSubScreen: String?
     private var modalSubScreen: String?
     /// The alert the modal layer belongs to, so only its own dismissal clears it.
     private weak var modalAlert: UIViewController?
+    /// Same contract for the modal host: identity, so a late teardown cannot clear a successor.
+    private weak var modalHost: UIViewController?
     /// What was last reported to the server, including any sub-screen. What flows are drawn between.
     private var lastReported: String?
     private var hostHasReported = false
@@ -163,19 +169,37 @@ final class ScreenTracker {
     // MARK: - Starting
 
     func start() {
-        if plan.observeViewControllers {
+        // Installed for the modal layer even when controllers must not name screens, and each handler
+        // checks the *current* plan rather than the one that existed at install time — `refinePlan`
+        // runs after the first window exists, and a decision wired in here would not follow it.
+        if plan.observeViewControllers || plan.observeModalLayer {
             ViewControllerObserver.onAppear = { [weak self] controller in
-                self?.observed(controller)
+                guard let self else { return }
+                if self.plan.observeViewControllers {
+                    self.observed(controller)
+                } else if self.plan.observeModalLayer {
+                    self.observedModalLayerOnly(controller)
+                }
             }
             ViewControllerObserver.onWillAppear = { [weak self] controller in
-                self?.rememberTitleOnEntry(of: controller)
+                guard let self, self.plan.observeViewControllers else { return }
+                self.rememberTitleOnEntry(of: controller)
             }
             ViewControllerObserver.onWillDisappear = { [weak self] controller in
-                self?.screenIsLeaving(controller)
+                guard let self, self.plan.observeViewControllers else { return }
+                self.screenIsLeaving(controller)
             }
             ViewControllerObserver.onDisappear = { [weak self] controller in
-                self?.alertLeft(controller)
-                self?.somethingLeftTheScreen()
+                guard let self else { return }
+                // Both guard on identity, so calling them for every disappearance is the cheap path.
+                self.alertLeft(controller)
+                self.modalHostLeft(controller)
+                // The re-read exists to recover a *controller-named* screen from under a closed
+                // sheet. With the host naming screens there is nothing to re-read — `observed` would
+                // run the naming path this plan forbids.
+                if self.plan.observeViewControllers {
+                    self.somethingLeftTheScreen()
+                }
             }
             ViewControllerObserver.install()
         }
@@ -300,6 +324,44 @@ final class ScreenTracker {
             actionStyleRaws: alert.actions.map { $0.style.rawValue },
             textFieldCount: alert.textFields?.count ?? 0
         )
+        report(screen: screen, kind: .uiKit, transition: "subscreen")
+    }
+
+    /// The modal layer when the host names the screens — the only role controllers play in that plan.
+    ///
+    /// Two shapes and nothing else. An alert, named by its structure exactly as in full observation.
+    /// And React Native's `Modal`, which presents a `…ModalHostViewController` of its own while the
+    /// route name stays with the screen underneath — the same fact a `Dialog` window is on Android,
+    /// where it has always been reported. Matched by class-name suffix because both architectures
+    /// spell it that way (`RCTModalHostViewController`, `RCTFabricModalHostViewController`) and the
+    /// name is the *platform's*, not the app's — there is nothing app-specific to leak.
+    ///
+    /// Everything else that appears here is left alone on purpose: in this plan the app's word is the
+    /// map, and a route presented as a sheet is already a screen with a name of its own.
+    private func observedModalLayerOnly(_ controller: UIViewController) {
+        if let alert = controller as? UIAlertController {
+            alertAppeared(alert)
+            return
+        }
+        guard NSStringFromClass(type(of: controller)).hasSuffix("ModalHostViewController") else { return }
+        guard let screen = currentScreen else {
+            LightSessionLog.debug("a modal appeared before any screen; not a part of anything yet")
+            return
+        }
+        modalHost = controller
+        // `Modal`, not the class name: the class is an implementation detail of the bridge, and every
+        // RN modal would otherwise be a node named after it.
+        modalHostSubScreen = "Modal"
+        report(screen: screen, kind: .uiKit, transition: "subscreen")
+    }
+
+    /// Identity, not class, for the same reason as `alertLeft` — and independent of it: an alert
+    /// closing over a still-open modal must not take the modal's layer with it.
+    private func modalHostLeft(_ controller: UIViewController) {
+        guard controller === modalHost else { return }
+        modalHost = nil
+        modalHostSubScreen = nil
+        guard let screen = currentScreen else { return }
         report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
@@ -559,6 +621,8 @@ final class ScreenTracker {
         // Entering a screen ends whatever part of the previous one was open. Keeping it would compose
         // the new screen with the old screen's modal.
         declaredSubScreen = nil
+        modalHostSubScreen = nil
+        modalHost = nil
         modalSubScreen = nil
         modalAlert = nil
         currentScreen = name
@@ -572,7 +636,7 @@ final class ScreenTracker {
     ) {
         let full = ScreenIdentity.compose(
             screen: screen,
-            parts: [declaredSubScreen, modalSubScreen].compactMap { $0 }
+            parts: [declaredSubScreen, modalHostSubScreen, modalSubScreen].compactMap { $0 }
         )
         // The same screen reported twice is the normal case, not an error: a navigator re-emits state on
         // every re-render, and `viewDidAppear` fires again when a modal above it closes.
@@ -658,10 +722,11 @@ final class ScreenTracker {
         onWindow?(window)
 
         settle.await(
-            contentCount: {
+            signature: {
                 // The window, so a modal's content counts towards "has this settled" too. A sheet
-                // sliding in over an empty screen is content arriving.
-                SkeletonBuilder.contentCount(window.lightSessionContent)
+                // sliding in over an empty screen is content arriving — and a sheet still sliding is
+                // geometry still moving.
+                SkeletonBuilder.contentSignature(window.lightSessionContent)
             },
             onSettled: { [weak self] settled in
                 guard let self else { return }
