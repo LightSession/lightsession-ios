@@ -67,22 +67,67 @@ final class FrameBatcherTests: XCTestCase {
         )
     }
 
+    /// A batch too small to trigger any size threshold still reaches the disk.
+    ///
+    /// This is the only bound on what an unannounced death costs. Every other trigger is about
+    /// size, and a session that never reaches one keeps its frames in memory until the app leaves
+    /// the foreground — which a crash, a jetsam kill or a stop from Xcode all skip. Measured in
+    /// production before this existed: a 79-second session had 23 real frames against a threshold
+    /// of 24 and had never written a batch, and a 9-second session on the same build recorded
+    /// nothing at all. The breadcrumb batcher beside this one has always flushed on age; the frame
+    /// batcher was the one that did not, and the asymmetry was the bug.
+    func testAgeTriggerRescuesASessionTooShortForAnySizeThreshold() {
+        var batcher = FrameBatcher(
+            flushAtCount: 24, flushAtBytes: 2 * 1024 * 1024, flushAfterSeconds: 30
+        )
+        batcher.add(frame(1))
+        batcher.add(frame(2))
+
+        // Frames are stamped 1_000 + sequence, so the oldest here is at 1_001.
+        XCTAssertFalse(
+            batcher.shouldFlush(nowMillis: 30_000),
+            "just under thirty seconds old, and far from any size threshold"
+        )
+        XCTAssertTrue(
+            batcher.shouldFlush(nowMillis: 31_001),
+            "thirty seconds of replay is the most an unannounced death may cost"
+        )
+        XCTAssertEqual(
+            batcher.flushReason(nowMillis: 31_001), .age,
+            "the reason has to name the age bound, or there is no evidence it ever fired"
+        )
+    }
+
+    /// Age is the fallback, not a relabelling of the triggers that pre-empt it.
+    func testASizeTriggeredBatchIsNotReportedAsAged() {
+        var batcher = FrameBatcher(flushAtCount: 2, flushAtBytes: 10_000_000, flushAfterSeconds: 30)
+        batcher.add(frame(1))
+        batcher.add(frame(2))
+        XCTAssertEqual(batcher.flushReason(nowMillis: 999_999), .count)
+    }
+
+    func testAnEmptyBatchIsNeverDueHoweverOld() {
+        let batcher = FrameBatcher(flushAfterSeconds: 30)
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 999_999_999))
+        XCTAssertEqual(batcher.ageMillis(nowMillis: 999_999_999), 0)
+    }
+
     func testCountTrigger() {
         var batcher = FrameBatcher(flushAtCount: 3, flushAtBytes: 10_000_000)
         batcher.add(frame(1))
         batcher.add(frame(2))
-        XCTAssertFalse(batcher.shouldFlush)
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 1_100))
         batcher.add(frame(3))
-        XCTAssertTrue(batcher.shouldFlush)
+        XCTAssertTrue(batcher.shouldFlush(nowMillis: 1_100))
     }
 
     func testByteTrigger() {
         var batcher = FrameBatcher(flushAtCount: 1_000, flushAtBytes: 2_500)
         batcher.add(frame(1, bytes: 1_000))
         batcher.add(frame(2, bytes: 1_000))
-        XCTAssertFalse(batcher.shouldFlush)
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 1_100))
         batcher.add(frame(3, bytes: 1_000))
-        XCTAssertTrue(batcher.shouldFlush, "three kilobytes of frames is a batch even if the count is not")
+        XCTAssertTrue(batcher.shouldFlush(nowMillis: 1_100), "three kilobytes of frames is a batch even if the count is not")
     }
 
     /// A replay with a gap in the middle still reaches the end, and the end is where "why did they give up"
@@ -99,7 +144,7 @@ final class FrameBatcherTests: XCTestCase {
         batcher.add(frame(1))
         XCTAssertEqual(batcher.drain().count, 1)
         XCTAssertEqual(batcher.bufferedBytes, 0)
-        XCTAssertFalse(batcher.shouldFlush)
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 1_100))
         XCTAssertEqual(batcher.batchNumber, 1)
     }
 
@@ -223,7 +268,7 @@ final class IdleBatchingTests: XCTestCase {
         var batcher = FrameBatcher(flushAtCount: 24, flushAtBytes: 2_000_000, flushAtTotalCount: 600)
         // Ten minutes of an untouched screen at one frame a second, minus one.
         for i in 1..<600 { batcher.add(repeated(i)) }
-        XCTAssertFalse(batcher.shouldFlush, "599 four-byte signals are not a batch worth waking the radio for")
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 1_100), "599 four-byte signals are not a batch worth waking the radio for")
         XCTAssertEqual(batcher.realCount, 0)
     }
 
@@ -231,7 +276,7 @@ final class IdleBatchingTests: XCTestCase {
     func testTheCeilingEventuallySendsAnIdleBuffer() {
         var batcher = FrameBatcher(flushAtCount: 24, flushAtBytes: 2_000_000, flushAtTotalCount: 600)
         for i in 1...600 { batcher.add(repeated(i)) }
-        XCTAssertTrue(batcher.shouldFlush)
+        XCTAssertTrue(batcher.shouldFlush(nowMillis: 1_100))
     }
 
     /// And nothing is lost by waiting: the repeats go out with the next thing that actually happened.
@@ -239,9 +284,9 @@ final class IdleBatchingTests: XCTestCase {
         var batcher = FrameBatcher(flushAtCount: 2, flushAtBytes: 2_000_000, flushAtTotalCount: 600)
         for i in 1...50 { batcher.add(repeated(i)) }
         batcher.add(real(51))
-        XCTAssertFalse(batcher.shouldFlush, "one real frame is not the threshold")
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 1_100), "one real frame is not the threshold")
         batcher.add(real(52))
-        XCTAssertTrue(batcher.shouldFlush)
+        XCTAssertTrue(batcher.shouldFlush(nowMillis: 1_100))
 
         let batch = batcher.drain()
         XCTAssertEqual(batch.count, 52, "the whole idle stretch goes with the frames that ended it")
@@ -253,8 +298,8 @@ final class IdleBatchingTests: XCTestCase {
         var batcher = FrameBatcher(flushAtCount: 3, flushAtBytes: 2_000_000, flushAtTotalCount: 600)
         batcher.add(real(1))
         batcher.add(real(2))
-        XCTAssertFalse(batcher.shouldFlush)
+        XCTAssertFalse(batcher.shouldFlush(nowMillis: 1_100))
         batcher.add(real(3))
-        XCTAssertTrue(batcher.shouldFlush)
+        XCTAssertTrue(batcher.shouldFlush(nowMillis: 1_100))
     }
 }

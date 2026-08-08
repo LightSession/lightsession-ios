@@ -84,15 +84,25 @@ public struct FrameBatcher {
     private(set) public var batchNumber = 0
     private(set) public var shedCount = 0
 
+    /// How long a batch may sit in memory before it is written to disk regardless of size.
+    ///
+    /// Thirty seconds bounds what an unannounced death costs to thirty seconds of replay. Shorter
+    /// would mean more spool files and more batch manifests on the server for no gain a viewer can
+    /// see; longer starts losing the short sessions this exists for, which is where the evidence
+    /// came from — a 9-second session that recorded nothing.
+    public let flushAfterSeconds: Int64
+
     public init(
         flushAtCount: Int = 24,
         flushAtBytes: Int = 2 * 1024 * 1024,
         flushAtTotalCount: Int = 600,
+        flushAfterSeconds: Int64 = 30,
         maxBufferedBytes: Int = 8 * 1024 * 1024
     ) {
         self.flushAtCount = flushAtCount
         self.flushAtBytes = flushAtBytes
         self.flushAtTotalCount = flushAtTotalCount
+        self.flushAfterSeconds = flushAfterSeconds
         self.maxBufferedBytes = maxBufferedBytes
     }
 
@@ -109,17 +119,60 @@ public struct FrameBatcher {
         }
     }
 
-    public var shouldFlush: Bool {
+    /// Whether this batch is due, given the time now.
+    ///
+    /// The age test is the one that bounds what a crash costs. Every other threshold here is about
+    /// size, and a session that never reaches one of them keeps its frames in memory until the app
+    /// leaves the foreground — so a process that dies without notice loses the lot. Measured on a
+    /// real session: 79 seconds of use produced 23 real frames against a threshold of 24, so the
+    /// batch had never once been written to disk. A 9-second session recorded nothing at all.
+    ///
+    /// `didEnterBackground` covers the polite exit and is not enough: a crash in the host app, a
+    /// jetsam kill, or a stop from Xcode all skip it. Once the spool has the frames they survive
+    /// the process and drain on the next launch, so the whole question is how long they sit before
+    /// getting there. [`flushAfterSeconds`] is that answer, and it is the *only* upper bound on
+    /// what is lost.
+    public func shouldFlush(nowMillis: Int64) -> Bool {
         guard !pending.isEmpty else { return false }
         return realCount >= flushAtCount
             || bufferedBytes >= flushAtBytes
             || pending.count >= flushAtTotalCount
+            || ageMillis(nowMillis: nowMillis) >= flushAfterSeconds * 1_000
+    }
+
+    /// Which threshold made this batch due.
+    ///
+    /// Here rather than at the call site, which used to pick between `size` and `count` with a
+    /// ternary — correct while those were the only two, and quietly wrong the moment a third
+    /// existed: an age-triggered flush would have been filed as `count`, and the metadata that
+    /// says *why* a batch was written is the only evidence of this bound working in the field.
+    ///
+    /// Order matters where thresholds overlap. Size first because a full buffer is the one with a
+    /// memory cost, then count, then age — age last because it is the fallback the others
+    /// pre-empt.
+    public func flushReason(nowMillis: Int64) -> FlushReason {
+        if bufferedBytes >= flushAtBytes { return .size }
+        if realCount >= flushAtCount || pending.count >= flushAtTotalCount { return .count }
+        return .age
+    }
+
+    /// How long the oldest pending frame has been waiting.
+    ///
+    /// Zero when nothing is pending, rather than something derived from an absent timestamp: an
+    /// empty batch is never due, and [`shouldFlush(nowMillis:)`] checks emptiness first.
+    public func ageMillis(nowMillis: Int64) -> Int64 {
+        guard let oldest = pending.first else { return 0 }
+        return max(0, nowMillis - oldest.timestampMillis)
     }
 
     /// Why this batch is being sent, for the metadata the server keeps.
     public enum FlushReason: String, Sendable {
         case count
         case size
+        /// The batch was old enough that keeping it in memory risked more than it saved. Recorded
+        /// distinctly so the server can tell a session that ends politely from one whose frames
+        /// only survive because of the age bound.
+        case age
         case background
         case sessionRotated
         case stopped

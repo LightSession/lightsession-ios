@@ -247,8 +247,10 @@ final class FrameRecorder {
             )
         )
 
-        if batcher.shouldFlush {
-            flushOnWorkQueue(reason: batcher.bufferedBytes >= batcher.flushAtBytes ? .size : .count)
+        // Checked against the frame's own timestamp rather than the wall clock, so the age bound
+        // is measured in the same units the frames carry and a test can drive it.
+        if batcher.shouldFlush(nowMillis: timestampMillis) {
+            flushOnWorkQueue(reason: batcher.flushReason(nowMillis: timestampMillis))
         }
     }
 
