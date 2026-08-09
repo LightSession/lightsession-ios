@@ -213,6 +213,9 @@ public func frameBatchMetadata(
         "user_id": userId,
         "user_type": userType.rawValue,
         "app_version": appVersion,
+        // Serialised with the batch rather than added at upload time, so a batch recovered from a
+        // previous run still says where it came from. See `Platform`.
+        "platform": Platform.name,
         "total_frame_count": String(frames.count),
         "real_frame_count": String(frames.filter { !$0.isRepeat }.count),
         "repeated_signal_count": String(frames.filter(\.isRepeat).count),

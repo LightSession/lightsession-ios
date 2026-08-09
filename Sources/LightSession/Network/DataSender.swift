@@ -92,6 +92,8 @@ extension ScreenReport {
             "screenType": kind.rawValue,
             "width": width,
             "height": height,
+            // Checked by the server against the project this key belongs to. See `Platform`.
+            "platform": Platform.name,
             "theme": theme.rawValue,
             "appVersionCode": appVersionCode,
             "appVersionName": appVersionName,
@@ -114,6 +116,7 @@ extension ScreenReport {
             "bitmapBase64": imageBase64,
             "width": width,
             "height": height,
+            "platform": Platform.name,
             "theme": theme.rawValue,
             "appVersionCode": appVersionCode,
             "appVersionName": appVersionName,
@@ -127,6 +130,9 @@ extension FlowReport {
             "from": from,
             "to": to,
             "type": transition,
+            // The only write carrying no other hint of origin: no screen type, no device info, no
+            // resolution. Without this the server cannot check a flow at all.
+            "platform": Platform.name,
             "timestamp": timestampMillis,
             "appVersionCode": appVersionCode,
             "appVersionName": appVersionName,

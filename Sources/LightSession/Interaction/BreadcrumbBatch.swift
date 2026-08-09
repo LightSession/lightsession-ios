@@ -109,6 +109,7 @@ public func breadcrumbBatchFields(
         "app_version": appVersion,
         "app_info": appJSON,
         "device_info": deviceJSON,
+        "platform": Platform.name,
         "batch_number": String(batchNumber),
         "timestamp": String(timestampMillis),
         "breadcrumbs": crumbsJSON,

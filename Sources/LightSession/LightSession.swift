@@ -278,7 +278,10 @@ public enum LightSession {
             "osVersion": device.systemVersion,
             "deviceModel": device.model,
             "manufacturer": "Apple",
-            "platform": "ios",
+            // The same constant the writes carry, so the two cannot drift apart. This one is nested
+            // inside `device_info` and describes the device; the one on the request describes who is
+            // talking, which is what the server checks against the project.
+            "platform": Platform.name,
         ]
     }
 
@@ -288,7 +291,7 @@ public enum LightSession {
             "version": info?["CFBundleShortVersionString"] as? String ?? "0.0.0",
             "versionCode": Int((info?["CFBundleVersion"] as? String) ?? "") ?? 0,
             "packageName": Bundle.main.bundleIdentifier ?? "unknown",
-            "platform": "ios",
+            "platform": Platform.name,
         ]
     }
 

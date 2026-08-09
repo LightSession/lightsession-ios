@@ -203,6 +203,10 @@ final class FrameBatcherTests: XCTestCase {
         XCTAssertEqual(metadata["repeated_signal_count"], "2")
         XCTAssertEqual(metadata["sequence_range"], "1-3")
         XCTAssertEqual(metadata["flush_reason"], "size")
+        // The server checks this against the project the key belongs to. A batch that does not say
+        // where it came from is accepted by every project, so a missing value here is the guard
+        // silently switched off rather than a visible failure.
+        XCTAssertEqual(metadata["platform"], "ios")
     }
 
     func testAnEmptyBatchHasNoMetadata() {

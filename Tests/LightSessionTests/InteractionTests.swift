@@ -201,6 +201,7 @@ final class BreadcrumbBatchTests: XCTestCase {
             appInfo: ["version": "1.0"]
         ))
         XCTAssertEqual(fields["type"], "breadcrumb_batch")
+        XCTAssertEqual(fields["platform"], "ios")
         // The two the ingest service refuses a batch without.
         XCTAssertEqual(fields["session_id"], "session-1")
         XCTAssertNotNil(fields["breadcrumbs"])
