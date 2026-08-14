@@ -459,3 +459,70 @@ final class WidgetChromeTests: XCTestCase {
         XCTAssertEqual(nodes.map(\.kind), [.unknown])
     }
 }
+
+/// The late-content watch's question: "did content arrive, or did the screen merely redraw".
+///
+/// Geometry and kind only — recolouring samples the live screen, so colour can waver between two
+/// captures of an identical layout, and a colour-only wobble resent on the watch path would spend
+/// its budget photographing noise.
+final class SameGeometryTests: XCTestCase {
+
+    private func frame(_ nodes: [SkeletonNode]) -> SkeletonFrame {
+        SkeletonFrame(width: 100, height: 200, background: nil, nodes: nodes)
+    }
+
+    private func node(
+        _ left: Int, _ top: Int, _ right: Int, _ bottom: Int,
+        kind: NodeKind = .text, color: String? = nil, stroke: Bool = false
+    ) -> SkeletonNode {
+        SkeletonNode(left: left, top: top, right: right, bottom: bottom,
+                     kind: kind, color: color, stroke: stroke)
+    }
+
+    func testIdenticalLayoutsMatch() {
+        let a = frame([node(0, 0, 10, 10), node(0, 20, 10, 30, kind: .button)])
+        let b = frame([node(0, 0, 10, 10), node(0, 20, 10, 30, kind: .button)])
+        XCTAssertTrue(SkeletonBuilder.sameGeometry(a, b))
+    }
+
+    func testColourIsIgnored() {
+        let a = frame([node(0, 0, 10, 10, color: "#FF0000")])
+        let b = frame([node(0, 0, 10, 10, color: "#00FF00")])
+        XCTAssertTrue(
+            SkeletonBuilder.sameGeometry(a, b),
+            "a highlight fading between two captures is not content arriving"
+        )
+    }
+
+    func testStrokeIsIgnored() {
+        let a = frame([node(0, 0, 10, 10, stroke: true)])
+        let b = frame([node(0, 0, 10, 10, stroke: false)])
+        XCTAssertTrue(SkeletonBuilder.sameGeometry(a, b))
+    }
+
+    func testAMovedRectangleIsAChange() {
+        let a = frame([node(0, 0, 10, 10)])
+        let b = frame([node(0, 5, 10, 15)])
+        XCTAssertFalse(SkeletonBuilder.sameGeometry(a, b))
+    }
+
+    func testADifferentKindIsAChange() {
+        let a = frame([node(0, 0, 10, 10, kind: .text)])
+        let b = frame([node(0, 0, 10, 10, kind: .image)])
+        XCTAssertFalse(SkeletonBuilder.sameGeometry(a, b))
+    }
+
+    func testADifferentCountIsAChange() {
+        let a = frame([node(0, 0, 10, 10)])
+        let b = frame([node(0, 0, 10, 10), node(0, 20, 10, 30)])
+        XCTAssertFalse(SkeletonBuilder.sameGeometry(a, b))
+    }
+
+    func testOrderMatters() {
+        // Nodes are emitted in paint order; the same rectangles in a different order paint
+        // differently, and that is a change worth resending.
+        let a = frame([node(0, 0, 10, 10, kind: .text), node(20, 0, 30, 10, kind: .image)])
+        let b = frame([node(20, 0, 30, 10, kind: .image), node(0, 0, 10, 10, kind: .text)])
+        XCTAssertFalse(SkeletonBuilder.sameGeometry(a, b))
+    }
+}

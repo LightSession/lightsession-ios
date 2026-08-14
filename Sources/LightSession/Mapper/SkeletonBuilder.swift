@@ -107,6 +107,23 @@ public enum SkeletonBuilder {
         return ContentSignature(count: count, geometry: geometry)
     }
 
+    /// Whether two frames draw the same layout — geometry and kind only, colour and stroke ignored.
+    ///
+    /// This is the late-content watch's question: "did content arrive, or did the screen merely
+    /// redraw". Recolouring samples the live screen, so colour can waver between two captures of an
+    /// identical layout — a highlight fading, a cursor blinking — and a colour-only wobble is not
+    /// content arriving. Resending on it would spend the watch's budget photographing noise.
+    ///
+    /// Order-sensitive on purpose: nodes are emitted in paint order, and two frames whose rectangles
+    /// match as *sets* but not as sequences paint differently.
+    public static func sameGeometry(_ a: SkeletonFrame, _ b: SkeletonFrame) -> Bool {
+        guard a.nodes.count == b.nodes.count else { return false }
+        return zip(a.nodes, b.nodes).allSatisfy { x, y in
+            x.left == y.left && x.top == y.top && x.right == y.right
+                && x.bottom == y.bottom && x.kind == y.kind
+        }
+    }
+
     private static func fold(_ node: ViewSnapshot, into count: inout Int, _ geometry: inout Int64) {
         guard isVisible(node) else { return }
         switch node.kind {

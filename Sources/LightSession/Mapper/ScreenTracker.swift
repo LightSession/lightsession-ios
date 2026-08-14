@@ -27,6 +27,10 @@ final class ScreenTracker {
     private let sender: DataSender
     private let cache: CaptureCache
     private let settle = ScreenSettle()
+    /// The late-content watch's own settle, so a recapture in progress and a navigation's settle
+    /// cannot cancel each other through shared state. Cancelled together with the watch.
+    private let lateSettle = ScreenSettle()
+    private let lateContent = LateContentWatch()
     private let appVersionName: String
     private let appVersionCode: Int
 
@@ -713,9 +717,20 @@ final class ScreenTracker {
         capture(screen: full, kind: kind)
     }
 
+    /// How the tracker finds the window it captures.
+    ///
+    /// A seam, not a feature: production reads the application's key window, and the one caller that
+    /// overrides it is the integration test — a package test host has no window scene, so there is
+    /// nothing for `lightSessionKeyWindow` to discover and the window under test has to be handed in.
+    var keyWindow: () -> UIWindow? = { UIApplication.shared.lightSessionKeyWindow }
+
     /// Waits for the screen to settle, then uploads it.
     private func capture(screen: String, kind: ScreenIdentity.Kind) {
-        guard let window = UIApplication.shared.lightSessionKeyWindow else {
+        // A navigation ends the previous screen's late-content watch: the changes from here on
+        // describe the next screen, and recapturing under the old name would file this screen's
+        // content as that one's.
+        cancelLateContent()
+        guard let window = keyWindow() else {
             // Not an error worth shouting about: this happens between a scene connecting and its window
             // becoming key, and the next screen will be captured normally.
             LightSessionLog.debug("no key window yet; \(screen) not captured")
@@ -777,9 +792,75 @@ final class ScreenTracker {
             return
         }
 
-        // Read the real colours off the screen, if asked to. Here rather than anywhere later because this
-        // is the settle callback: the layout has stopped moving, so the geometry and the pixels describe
-        // the same moment. It degrades to the palette on its own, so there is no failure to handle.
+        let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let compositeId = ScreenIdentity.compositeId(
+            name: screen,
+            appVersionName: appVersionName,
+            appVersionCode: appVersionCode,
+            width: built.width,
+            height: built.height,
+            theme: theme
+        )
+        // Logged where the wireframe is *built*, not where it is sent. A screen that comes out wrong
+        // comes out wrong here, and on a run where the upload is failing this line is the only one that
+        // says what was found: four fields and a button reporting two nodes points straight at the
+        // reading, while "wireframe sent" says nothing at all.
+        LightSessionLog.debug(
+            "wireframe built: \(screen) \(built.width)x\(built.height) "
+                + "\(built.nodes.count) node(s) \(built.nodeSummary)"
+        )
+
+        let state = cache.state(forCapture: compositeId)
+        // Set before the upload rather than after it: this is what a heatmap anchors to, and the capture
+        // exists server-side under this id whether or not *this* run was the one that sent it. Waiting for
+        // a success would leave every interaction unanchored on a screen the cache had already covered.
+        lastCaptureId = compositeId
+
+        // The bar, not a boolean: sent only when this capture carries strictly more rectangles than
+        // the richest wireframe that ever landed for this slot. That is what lets a screen improve —
+        // a spinner stored on the first visit is replaced the first time a richer capture shows up —
+        // and what makes it converge: equal-or-poorer captures are silence. Recolouring waits until
+        // the bar is cleared, so the pixels of a screen that will not be sent are never read.
+        if built.nodes.count > state.wireframeRects {
+            send(
+                wireframe: built, snapshot: snapshot, screen: screen, kind: kind,
+                compositeId: compositeId, theme: theme, window: window
+            )
+        } else {
+            LightSessionLog.debug(
+                "\(screen) holds a wireframe of \(state.wireframeRects) rect(s); "
+                    + "this capture has \(built.nodes.count) — not sent"
+            )
+        }
+
+        // Armed the moment the frame exists, not when its send succeeds. Arming on success would
+        // stretch the blind window across a whole HTTP round trip, and data landing inside it — a
+        // cached API answering in 300 ms — would change the screen before anyone was listening, and
+        // never again.
+        watchForLateContent(
+            window: window, screen: screen, kind: kind, compositeId: compositeId,
+            theme: theme, baseline: built, rescansLeft: Self.lateContentRescans
+        )
+
+        guard config.captureRealScreens, !state.hasScreenshot else { return }
+        scheduleScreenshot(screen: screen, kind: kind, window: window, settledAs: snapshot)
+    }
+
+    /// Recolours and sends one wireframe. One path for both callers — the first capture and a
+    /// late-content upgrade — so the recolour policy, the logs and the cache write cannot drift apart.
+    private func send(
+        wireframe built: SkeletonFrame,
+        snapshot: ViewSnapshot,
+        screen: String,
+        kind: ScreenIdentity.Kind,
+        compositeId: String,
+        theme: Theme,
+        window: UIWindow
+    ) {
+        // Read the real colours off the screen, if asked to. Here rather than anywhere later because
+        // the callers run in a settle callback: the layout has stopped moving, so the geometry and the
+        // pixels describe the same moment. It degrades to the palette on its own, so there is no
+        // failure to handle.
         let frame = config.sampleWireframeColours
             ? ScreenshotRenderer.recolour(
                 built,
@@ -789,30 +870,12 @@ final class ScreenTracker {
             )
             : built
 
-        let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
-        let compositeId = ScreenIdentity.compositeId(
-            name: screen,
-            appVersionName: appVersionName,
-            appVersionCode: appVersionCode,
-            width: frame.width,
-            height: frame.height,
-            theme: theme
-        )
-        // Logged where the wireframe is *built*, not where it is sent. A screen that comes out wrong
-        // comes out wrong here, and on a run where the upload is failing this line is the only one that
-        // says what was found: four fields and a button reporting two nodes points straight at the
-        // reading, while "wireframe sent" says nothing at all.
-        LightSessionLog.debug(
-            "wireframe built: \(screen) \(frame.width)x\(frame.height) "
-                + "\(frame.nodes.count) node(s) \(frame.nodeSummary)"
-        )
-
-        // Then every node, in order. Verbose-only, and worth the noise: a wireframe that comes out wrong
+        // Every node, in order. Verbose-only, and worth the noise: a wireframe that comes out wrong
         // is almost always a *painting* problem rather than a reading one, and the order is the only
         // thing that shows it. The bug that earned this line built twenty-five nodes for a form and
         // rendered three colours, because the sheet's own background was emitted second-to-last and the
         // renderer paints in the order it receives — every field under a rectangle the size of the
-        // screen. The summary above said "25 node(s)" and looked healthy. This said which one.
+        // screen. The build summary said "25 node(s)" and looked healthy. This said which one.
         for (index, node) in frame.nodes.enumerated() {
             LightSessionLog.debug(
                 "  node[\(index)] \(node.kind.rawValue) \(node.left),\(node.top) "
@@ -820,12 +883,6 @@ final class ScreenTracker {
                     + "color=\(node.color ?? "-") stroke=\(node.stroke)"
             )
         }
-
-        let state = cache.state(forCapture: compositeId)
-        // Set before the upload rather than after it: this is what a heatmap anchors to, and the capture
-        // exists server-side under this id whether or not *this* run was the one that sent it. Waiting for
-        // a success would leave every interaction unanchored on a screen the cache had already covered.
-        lastCaptureId = compositeId
 
         let report = ScreenReport(
             compositeId: compositeId,
@@ -840,24 +897,118 @@ final class ScreenTracker {
             appVersionCode: appVersionCode
         )
 
-        if state.hasWireframe {
-            LightSessionLog.debug("\(screen) already has a wireframe")
-        } else {
-            sender.send(screen: report) { [weak self] result in
-                switch result {
-                case .success:
-                    self?.cache.recordWireframe(forCapture: compositeId)
-                    LightSessionLog.debug("wireframe sent: \(screen)")
-                case .failure(let error):
-                    // Not cached on failure, so the next visit tries again. Caching an upload that did
-                    // not land is how a screen goes missing permanently.
-                    LightSessionLog.error("wireframe \(screen) failed: \(error.localizedDescription)")
-                }
+        sender.send(screen: report) { [weak self] result in
+            switch result {
+            case .success:
+                // The count raises the bar; the bar is monotonic, so a first send and a late upgrade
+                // completing out of order cannot lower it.
+                self?.cache.recordWireframe(forCapture: compositeId, rects: frame.nodes.count)
+                LightSessionLog.debug("wireframe sent: \(screen) (\(frame.nodes.count) rect(s))")
+            case .failure(let error):
+                // Not cached on failure, so the next visit tries again. Caching an upload that did
+                // not land is how a screen goes missing permanently.
+                LightSessionLog.error("wireframe \(screen) failed: \(error.localizedDescription)")
             }
         }
+    }
 
-        guard config.captureRealScreens, !state.hasScreenshot else { return }
-        scheduleScreenshot(screen: screen, kind: kind, window: window, settledAs: snapshot)
+    /// How many times a screen's wireframe may be re-examined after its content changes late.
+    ///
+    /// The budget is what bounds a screen that ticks by itself — a carousel, a clock, a live price.
+    /// Every examination spends one, including the ones that find the same layout and send nothing,
+    /// and a screen out of budget keeps whichever settled state was sent last.
+    private static let lateContentRescans = 3
+
+    /// Recaptures a screen whose content arrives after its wireframe was taken.
+    ///
+    /// ## The gap this closes
+    ///
+    /// The wireframe is captured when the screen settles, and a loading screen settles almost
+    /// immediately: an indeterminate spinner animates without adding views or moving frames, so the
+    /// content signature holds still and the settle detector is right to allow it. The scan records
+    /// the shell around a spinner, and until the bar existed that picture was permanent. The
+    /// screenshot path papers over the same gap with a flat quiet-period, which is a guess about
+    /// every app's network encoded as a constant in this SDK.
+    ///
+    /// This is the guess removed. Content arriving must add views or move frames — that is what
+    /// content *is* to a wireframe — so [LateContentWatch] re-asks the signature once a second and
+    /// wakes on the change. The recapture settles first (absorbing the arrival's own animation),
+    /// compares geometry and kind while ignoring colour, and sends only when the layout actually
+    /// changed. `ls-api` upserts by capture slot, so the resend replaces the wireframe and cannot
+    /// blank a screenshot beside it.
+    ///
+    /// ## What ends the watch
+    ///
+    /// Events, never a clock: a touch (the state after it is the person's edit, not the screen they
+    /// arrived at — the same rule that cancels a pending screenshot), a navigation (the changes now
+    /// describe the next screen), the app going to background, the window going away, or the budget
+    /// running out.
+    private func watchForLateContent(
+        window: UIWindow,
+        screen: String,
+        kind: ScreenIdentity.Kind,
+        compositeId: String,
+        theme: Theme,
+        baseline: SkeletonFrame,
+        rescansLeft: Int
+    ) {
+        guard rescansLeft > 0 else { return }
+
+        lateContent.arm(
+            baseline: SkeletonBuilder.contentSignature(window.lightSessionContent),
+            signature: { [weak window] in
+                window.map { SkeletonBuilder.contentSignature($0.lightSessionContent) }
+            }
+        ) { [weak self, weak window] in
+            guard let self, let window else { return }
+            // The arm described one screen; a change on any other must not overwrite that screen's
+            // wireframe with a picture of this one.
+            guard self.lastReported == screen else { return }
+
+            self.lateSettle.await(
+                signature: { SkeletonBuilder.contentSignature(window.lightSessionContent) },
+                onSettled: { [weak self, weak window] _ in
+                    guard let self, let window, self.lastReported == screen else { return }
+
+                    let snapshot = window.lightSessionContent
+                    guard let fresh = SkeletonBuilder.build(
+                        root: snapshot,
+                        scale: Double(window.screen.scale),
+                        background: window.lightSessionBackground
+                    ) else { return }
+
+                    if SkeletonBuilder.sameGeometry(fresh, baseline) {
+                        // Changed and settled back to the same layout — a clock tick, a refresh that
+                        // found nothing. Watch again; the budget bounds what this can cost.
+                        self.watchForLateContent(
+                            window: window, screen: screen, kind: kind, compositeId: compositeId,
+                            theme: theme, baseline: baseline, rescansLeft: rescansLeft - 1
+                        )
+                        return
+                    }
+
+                    LightSessionLog.debug(
+                        "late content on \(screen): "
+                            + "\(baseline.nodes.count) -> \(fresh.nodes.count) rect(s); resending"
+                    )
+                    self.send(
+                        wireframe: fresh, snapshot: snapshot, screen: screen, kind: kind,
+                        compositeId: compositeId, theme: theme, window: window
+                    )
+                    // The fresh frame is the new baseline: the next arrival is measured against what
+                    // the map now shows, not against the spinner from minutes ago.
+                    self.watchForLateContent(
+                        window: window, screen: screen, kind: kind, compositeId: compositeId,
+                        theme: theme, baseline: fresh, rescansLeft: rescansLeft - 1
+                    )
+                }
+            )
+        }
+    }
+
+    private func cancelLateContent() {
+        lateContent.cancel()
+        lateSettle.cancel()
     }
 
     /// Schedules the upgrade from wireframe to a real screenshot.
@@ -901,6 +1052,10 @@ final class ScreenTracker {
 
     /// Called on every touch. Cancels a pending screenshot rather than deferring it.
     func screenTouched() {
+        // The late-content watch dies on the first touch too, and for the same reason the screenshot
+        // does: the state after a touch is the person's edit, not the screen they arrived at. Before
+        // the guard below, because the watch outlives any pending screenshot.
+        cancelLateContent()
         guard pendingScreenshot != nil else { return }
         touchedSinceScheduled = true
         cancelPendingScreenshot()
