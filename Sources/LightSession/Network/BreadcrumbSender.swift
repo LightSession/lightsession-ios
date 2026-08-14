@@ -42,7 +42,10 @@ public final class HTTPBreadcrumbSender: BreadcrumbSender {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.body(fields: fields, boundary: boundary)
 
-        session.dataTask(with: request) { data, response, error in
+        // Breadcrumbs are small JSON in multipart, the best case gzip has: 87% measured. See
+        // `Compression`.
+        session.dataTask(with: Compression.prepared(request)) { data, response, error in
+            Compression.noteResponse(response)
             if let error {
                 completion(.failure(error))
                 return

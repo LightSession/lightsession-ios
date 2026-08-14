@@ -101,7 +101,11 @@ public final class HTTPDataSender: DataSender {
             return
         }
 
-        session.dataTask(with: request) { data, response, error in
+        // Compressed when the server has said it can inflate, untouched otherwise; and every
+        // response is read for that advertisement — the first plain send of the process is what
+        // flips the latch. See `Compression`.
+        session.dataTask(with: Compression.prepared(request)) { data, response, error in
+            Compression.noteResponse(response)
             if let error {
                 completion(.failure(error))
                 return
