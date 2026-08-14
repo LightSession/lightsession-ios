@@ -149,6 +149,83 @@ final class InteractionRecorder {
         flushIfDue()
     }
 
+    /// Records a handled error and flushes at once — an error is the crumb someone will go looking
+    /// for, and "the batch was two events short of its threshold" is a bad reason not to have it.
+    ///
+    /// Hops to the main thread if needed: everything else here runs there, and `captureError` is
+    /// callable from anywhere. The details were built at the capture site, so the hop changes
+    /// nothing they describe — the stack and the thread are the caller's, not this queue's.
+    func record(error details: ErrorDetails) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.record(error: details) }
+            return
+        }
+        session.markActive()
+        let screen = currentScreen()
+        sequence += 1
+        batcher.add(
+            ErrorEvent(
+                sequence: sequence,
+                details: details,
+                userId: session.userId,
+                userType: session.userType,
+                appVersion: appVersion,
+                screen: screen?.name,
+                screenId: screen?.captureId
+            ),
+            nowMillis: details.timestampMillis
+        )
+        LightSessionLog.debug("handled error on \(screen?.name ?? "unknown screen")")
+        flush()
+    }
+
+    /// Records a crash, synchronously, on whatever thread is dying.
+    ///
+    /// Nothing here touches the batcher or the timers — they are main-thread state and this thread
+    /// may not be it. The crumb goes into its own single-event batch and straight to disk: one file
+    /// write and one rename, the same write every batch already trusts. The upload is the next
+    /// launch's drain, which is the whole point of the spool — a session recorded on the way down
+    /// arrives when the app comes back.
+    ///
+    /// Two reads here are best-effort by design, and Android's capture states the same trade: the
+    /// sequence and the screen are main-thread values read from a thread that is crashing, and a
+    /// stale answer is still the right neighbourhood while a lock on the way down is a lost crash.
+    func record(fatal details: ErrorDetails) {
+        let screen = currentScreen()
+        let event = ErrorEvent(
+            sequence: sequence + 1,
+            details: details,
+            userId: session.userId,
+            userType: session.userType,
+            appVersion: appVersion,
+            screen: screen?.name,
+            screenId: screen?.captureId
+        )
+        guard let fields = breadcrumbBatchFields(
+            events: [event],
+            sessionId: session.sessionId,
+            userId: session.userId,
+            userType: session.userType,
+            appVersion: appVersion,
+            // Out of band: the ordinary counter is main-thread state. The number never ordered
+            // anything — the sequence and the timestamp do — and -1 marks the batch as the one
+            // written on the way down.
+            batchNumber: -1,
+            timestampMillis: details.timestampMillis,
+            deviceInfo: deviceInfo,
+            appInfo: appInfo
+        ) else {
+            LightSessionLog.error("could not encode the crash; nothing will be reported")
+            return
+        }
+        do {
+            try spool.write(breadcrumbs: fields)
+            LightSessionLog.debug("crash spooled; it uploads on the next launch")
+        } catch {
+            LightSessionLog.error("could not spool the crash: \(error.localizedDescription)")
+        }
+    }
+
     private func flushIfDue() {
         guard batcher.shouldFlush(nowMillis: Self.nowMillis()) else { return }
         flush()

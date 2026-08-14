@@ -98,6 +98,14 @@ public struct LightSessionConfig: Sendable {
     /// Cover images too. Off by default: it hides every icon and logo along with the photos.
     public var maskImages: Bool
 
+    /// Capture uncaught Objective-C exceptions, and whatever the app hands to
+    /// `LightSession.captureError`, attributed to the screen they happened on.
+    ///
+    /// On by default: the crashes most worth having are the ones from the first session after
+    /// install, which is exactly when nobody has configured anything. What "uncaught" covers on
+    /// this platform — and what it deliberately does not — is stated on `ErrorCapture`.
+    public var captureErrors: Bool
+
     public init(
         apiKey: String,
         apiURL: String,
@@ -113,7 +121,10 @@ public struct LightSessionConfig: Sendable {
         enableReplay: Bool = true,
         captureIntervalMillis: Int64 = 1_000,
         interactionCaptureIntervalMillis: Int64 = 100,
-        sessionTimeoutMillis: Int64 = SessionIdentity.defaultIdleTimeoutMillis
+        sessionTimeoutMillis: Int64 = SessionIdentity.defaultIdleTimeoutMillis,
+        // Appended last, as this list demands: reordering defaulted parameters breaks positional
+        // callers silently.
+        captureErrors: Bool = true
     ) {
         self.apiKey = apiKey
         self.apiURL = apiURL
@@ -130,6 +141,7 @@ public struct LightSessionConfig: Sendable {
         self.captureIntervalMillis = captureIntervalMillis
         self.interactionCaptureIntervalMillis = interactionCaptureIntervalMillis
         self.sessionTimeoutMillis = sessionTimeoutMillis
+        self.captureErrors = captureErrors
     }
 }
 

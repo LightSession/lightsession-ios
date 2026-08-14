@@ -182,6 +182,26 @@ public enum LightSession {
             }
         }
 
+        // Uncaught-exception capture, wired to the interaction recorder because an error is a
+        // breadcrumb: the spool, the retry and the ordering already exist there, and the spool
+        // never evicts breadcrumbs — durability is inherited, not built. Installed only when the
+        // recorder exists: with `trackInteractions` off there is nowhere durable to put a crash,
+        // and a handler that captures into the void would be worse than none.
+        if config.captureErrors, let recorder = interactions {
+            let appModule = Bundle.main.object(forInfoDictionaryKey: "CFBundleExecutable") as? String ?? ""
+            ErrorCapture.install { [weak recorder] exception in
+                let thread = ErrorDetails.currentThread()
+                recorder?.record(fatal: ErrorDetails(
+                    handled: false,
+                    threadName: thread.name,
+                    threadId: thread.id,
+                    exceptions: ErrorCrumb.exceptions(for: exception, appModule: appModule),
+                    attributes: [:],
+                    timestampMillis: Int64(Date().timeIntervalSince1970 * 1000)
+                ))
+            }
+        }
+
         // The tracker hands over the window it captured, rather than each recorder finding one for itself:
         // two answers to "which window" is how a heatmap ends up plotted over a capture of something else.
         tracker.onWindow = { window in
@@ -310,6 +330,43 @@ public enum LightSession {
 
     /// The session everything is being recorded under, if recording is on.
     public static var currentSessionId: String? { session?.sessionId }
+
+    /// Records an error the app caught and decided to keep — attributed to the screen it happened
+    /// on, on the session's timeline, beside the taps and navigations that led to it.
+    ///
+    /// ```swift
+    /// } catch {
+    ///     LightSession.captureError(error, attributes: ["gateway": "stripe"])
+    /// }
+    /// ```
+    ///
+    /// The stack recorded is this call site's — an `Error` value does not travel with a trace on
+    /// this platform, so where it was *caught* is the honest location available, and in practice
+    /// the catch block is in the code that owns the failure. Underlying `NSError`s are walked into
+    /// the same cause chain Android sends, outermost first.
+    ///
+    /// Attributes carry strings, numbers and booleans; anything else is dropped with a log line
+    /// rather than stringified. Callable from any thread.
+    public static func captureError(_ error: Error, attributes: [String: Any] = [:]) {
+        guard let recorder = interactions else {
+            LightSessionLog.info("captureError before start; ignored")
+            return
+        }
+        // Everything the capture site owns is read here, before any hop: the stack and the thread
+        // must describe the caller, not whichever queue the recorder runs on. The SDK's own two
+        // frames are dropped so the trace starts where the app called in.
+        let appModule = Bundle.main.object(forInfoDictionaryKey: "CFBundleExecutable") as? String ?? ""
+        let stack = Array(Thread.callStackSymbols.dropFirst(2))
+        let thread = ErrorDetails.currentThread()
+        recorder.record(error: ErrorDetails(
+            handled: true,
+            threadName: thread.name,
+            threadId: thread.id,
+            exceptions: ErrorCrumb.exceptions(for: error, stack: stack, appModule: appModule),
+            attributes: attributes,
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1000)
+        ))
+    }
 
     /// Reports the screen the app is on.
     ///
