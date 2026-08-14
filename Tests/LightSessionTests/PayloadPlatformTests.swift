@@ -21,6 +21,7 @@ final class PayloadPlatformTests: XCTestCase {
             imageBase64: imageBase64,
             width: 390,
             height: 844,
+            density: 3.0,
             theme: .light,
             appVersionName: "1.0.0",
             appVersionCode: 1
@@ -53,5 +54,42 @@ final class PayloadPlatformTests: XCTestCase {
     /// `Platform.name`, which would pass whatever that constant said.
     func testTheNameIsTheOneTheServerParses() {
         XCTAssertEqual(Platform.name, "ios")
+    }
+}
+
+/// The density field, under the name the server pins from its side.
+///
+/// Mirrors `density_is_optional_on_the_wire_and_read_when_it_is_there` in ls-api: the server
+/// tolerates its absence because old SDKs are phones in pockets, but *this* SDK must never be the
+/// old one again — the session payload carried density from the start while the capture payload
+/// did not, and every iOS capture was stored NULL and drawn on the frontend's assumption.
+final class PayloadDensityTests: XCTestCase {
+    private func screen(imageBase64: String?) -> ScreenReport {
+        ScreenReport(
+            compositeId: "Home_390x844_Light",
+            name: "Home",
+            kind: .uiKit,
+            skeleton: nil,
+            imageBase64: imageBase64,
+            width: 390,
+            height: 844,
+            density: 3.0,
+            theme: .light,
+            appVersionName: "1.0.0",
+            appVersionCode: 1
+        )
+    }
+
+    func testCreateBodyCarriesTheDensity() {
+        XCTAssertEqual(screen(imageBase64: nil).createBody["density"] as? Double, 3.0)
+    }
+
+    /// Matching Android: the replace route rewrites the image of a capture row the create already
+    /// made, and the row carries the density. Writing it here too would be a second source of truth
+    /// for the same cell.
+    func testScreenshotBodyOmitsTheDensity() {
+        let body = screen(imageBase64: "AAAA").screenshotBody
+        XCTAssertNotNil(body)
+        XCTAssertNil(body?["density"], "the screenshot replace must not carry density")
     }
 }

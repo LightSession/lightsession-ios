@@ -17,6 +17,17 @@ public struct ScreenReport: Equatable, Sendable {
     public let imageBase64: String?
     public let width: Int
     public let height: Int
+    /// Pixels per point on the device that took this capture — `UIScreen.scale`.
+    ///
+    /// `width` and `height` cannot answer the question the screen map asks of them: they are
+    /// resolution, the map draws *size*, and density is the only thing that converts one into the
+    /// other. Without it a 2560x1600 tablet at density 2.0 draws shorter than a 1080x2400 phone at
+    /// 2.625 — which is the report this field exists because of. The session payload has carried it
+    /// from the start; the capture payload did not, so every iOS capture was stored with a NULL
+    /// density and drawn on the frontend's assumption.
+    ///
+    /// Required rather than defaulted, so a new construction site cannot forget it into NULL.
+    public let density: Double
     public let theme: Theme
     public let appVersionName: String
     public let appVersionCode: Int
@@ -29,6 +40,7 @@ public struct ScreenReport: Equatable, Sendable {
         imageBase64: String?,
         width: Int,
         height: Int,
+        density: Double,
         theme: Theme,
         appVersionName: String,
         appVersionCode: Int
@@ -40,6 +52,7 @@ public struct ScreenReport: Equatable, Sendable {
         self.imageBase64 = imageBase64
         self.width = width
         self.height = height
+        self.density = density
         self.theme = theme
         self.appVersionName = appVersionName
         self.appVersionCode = appVersionCode
@@ -92,6 +105,10 @@ extension ScreenReport {
             "screenType": kind.rawValue,
             "width": width,
             "height": height,
+            // Under the name the server pins with a test of its own. Unconditional: "absent" on
+            // this field means an SDK too old to know it, which the server stores as NULL and the
+            // frontend draws on an assumption — omitting it when it looks ordinary would be a lie.
+            "density": density,
             // Checked by the server against the project this key belongs to. See `Platform`.
             "platform": Platform.name,
             "theme": theme.rawValue,
@@ -108,6 +125,9 @@ extension ScreenReport {
     /// `screenName` is required here and its absence is not a validation nicety: without it the server
     /// rejects the request outright, which is exactly what happened on Android for as long as the only
     /// caller was unreachable.
+    ///
+    /// No `density` here, deliberately and matching Android: this call replaces the image of a
+    /// capture row the create already made, and the row carries the density.
     public var screenshotBody: [String: Any]? {
         guard let imageBase64 else { return nil }
         return [

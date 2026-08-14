@@ -892,6 +892,9 @@ final class ScreenTracker {
             imageBase64: nil,
             width: frame.width,
             height: frame.height,
+            // The same screen whose scale turned the skeleton's points into pixels, so the two
+            // numbers cannot come from different places or disagree.
+            density: Double(window.screen.scale),
             theme: theme,
             appVersionName: appVersionName,
             appVersionCode: appVersionCode
@@ -1194,6 +1197,10 @@ final class ScreenTracker {
 
         let appVersionName = self.appVersionName
         let appVersionCode = self.appVersionCode
+        // Read here with the other main-thread values: the struct requires it, even though the
+        // screenshot body never writes it — that route replaces the image of a row the create
+        // already made, and the row carries the density.
+        let density = Double(window.screen.scale)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let jpeg = ScreenshotRenderer.encode(image, quality: 0.6) else { return }
 
@@ -1205,6 +1212,7 @@ final class ScreenTracker {
                 imageBase64: jpeg.base64EncodedString(),
                 width: frame.width,
                 height: frame.height,
+                density: density,
                 theme: theme,
                 appVersionName: appVersionName,
                 appVersionCode: appVersionCode
