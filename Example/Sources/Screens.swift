@@ -102,6 +102,12 @@ final class HubViewController: UIViewController {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: HostNamedModalScreens())
             }),
+            // A named screen that pushes, with a field — the shape that produced phantom modal
+            // nodes. Run with `-demoHostNamesScreens 1 -demoNav 1`.
+            Route("hostpush", "Named screen that pushes, with a keyboard", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: HostNamedPushScreens())
+            }),
             // A root that swaps its content: the one shape that emits no UIKit event at all.
             Route("routed", "A root switch, named by its route", {
                 guard #available(iOS 16.0, *) else { return UIViewController() }

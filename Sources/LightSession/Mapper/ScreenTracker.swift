@@ -364,52 +364,30 @@ final class ScreenTracker {
         report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
-    /// What to call a modal that appeared while the app is naming its own screens, or `nil` if this
-    /// controller is not a modal at all.
+    /// The four facts `modalLayerName` needs, read off a live controller.
     ///
-    /// ## The gap this closes
-    ///
-    /// This used to accept exactly two things: a `UIAlertController`, and a class whose name ends in
-    /// `ModalHostViewController` — React Native's bridge. **A SwiftUI `.sheet` is neither**, so it was
-    /// dropped in silence: no sub-screen, not once, in any app that names its own screens. Measured
-    /// against a reproduction of a real app: the sheet went up and came down with nothing reported at
-    /// all, while the alert beside it mapped correctly. And because a sheet shares the window it is
-    /// presented over, its contents landed in the *parent* screen's wireframe — the screen was missing
-    /// and its picture was in the wrong place, from one omission.
-    ///
-    /// The test is presentation, not class. A controller with a `presentingViewController` was put on
-    /// screen *over* something, which is what a modal is; a pushed screen has none, and neither does a
-    /// tab, a child or a root. That covers a SwiftUI sheet, a `fullScreenCover`, a UIKit
-    /// `present(_:animated:)` and whatever the next framework calls its version, without naming any of
-    /// them.
-    ///
-    /// ## The name
-    ///
-    /// An `accessibilityIdentifier` if the app set one — the developer naming the thing, fixed by
-    /// definition. Otherwise a word for the shape: `Sheet` for a sheet, `Modal` for anything else,
-    /// which is what React Native's host has always been called and what its nodes already carry.
-    /// Never anything the modal *says*: a sheet titled with a record's name would mint a node per
-    /// record, which is the trap `alertName` exists to avoid and the same one applies here.
+    /// The identity check is the whole of what went wrong before: `presentingViewController` is
+    /// non-nil for anything *inside* a presented stack — UIKit answers with the presenter of the
+    /// farthest presented ancestor — so a pushed screen inside a presented navigation controller has
+    /// one, and so does a keyboard host nested in somebody else's presentation. Asking whether the
+    /// presenter presented *this* controller is the exact question, and it is true only for the one
+    /// that really was presented.
     private func modalLayerLabel(for controller: UIViewController) -> String? {
-        if NSStringFromClass(type(of: controller)).hasSuffix("ModalHostViewController") {
-            return "Modal"
-        }
-        // Presented over something, rather than pushed into it or contained by it.
-        guard controller.presentingViewController != nil else { return nil }
-        // A controller UIKit presents on the app's behalf — a share sheet, a photo picker, the
-        // keyboard's own hosts. Reported like any other modal: it is genuinely a place the person
-        // is, and refusing to name it would leave the same hole this fixes.
-        // The view's, because a controller has none: identifiers belong to the thing on screen.
-        // `isViewLoaded` first — asking a presented controller for `view` is safe, but asking one
-        // that has not loaded would build a view hierarchy from inside an observer.
-        if controller.isViewLoaded,
-           let declared = ScreenIdentity.subScreenLabel(controller.view.accessibilityIdentifier) {
-            return declared
-        }
+        let presentedItself = controller.presentingViewController?.presentedViewController === controller
+        let shape: ModalShape
         switch controller.modalPresentationStyle {
-        case .pageSheet, .formSheet: return "Sheet"
-        default: return "Modal"
+        case .pageSheet, .formSheet: shape = .sheet
+        default: shape = .other
         }
+        // The view's identifier, because a controller has none. `isViewLoaded` first: asking an
+        // unloaded controller for `view` would build a hierarchy from inside an observer.
+        let identifier = controller.isViewLoaded ? controller.view.accessibilityIdentifier : nil
+        return modalLayerName(
+            className: NSStringFromClass(type(of: controller)),
+            isPresentedItself: presentedItself,
+            shape: shape,
+            identifier: identifier
+        )
     }
 
     /// Identity, not class, for the same reason as `alertLeft` — and independent of it: an alert
