@@ -475,6 +475,18 @@ public enum ModalShape: Equatable, Sendable {
 /// A modal layer is a layer *over this screen*. A controller in another window is over a different
 /// window, and whether the person is looking at it is not something this SDK gets to claim.
 ///
+/// ## Why "already named" ends it
+///
+/// One presentation is one layer, and two mechanisms notice the same sheet. A SwiftUI `.sheet`
+/// carrying `.lightSessionSubScreen("Trocar empresa")` calls `setSubScreen` from the content's
+/// `onAppear`, and a moment later its hosting controller's `viewDidAppear` arrives here. Measured in
+/// a real app, both fired and composed into `dispatches › Trocar empresa › Sheet`: a depth the app
+/// does not have, with the name the developer chose demoted to a parent of a word invented for the
+/// same sheet.
+///
+/// Alerts do not come through here — they get a layer of their own — so an alert raised *over* a
+/// named part still stacks, which is a second thing on screen and should say so.
+///
 /// ## The name
 ///
 /// An `accessibilityIdentifier` if the app set one — the developer naming the thing, fixed by
@@ -484,12 +496,14 @@ public func modalLayerName(
     className: String,
     isPresentedItself: Bool,
     isInScreenWindow: Bool,
+    isAlreadyNamedByApp: Bool,
     shape: ModalShape,
     identifier: String?
 ) -> String? {
-    // Before the bridge's own host: a controller somewhere else is not a layer over this screen,
-    // whatever class it is.
+    // Both guards come before the bridge's own host, and for the same reason: they are about whether
+    // there is a layer to name at all, not about what to call it.
     guard isInScreenWindow else { return nil }
+    guard !isAlreadyNamedByApp else { return nil }
     // React Native's bridge presents its own host; it is a modal whatever the presentation says.
     if className.hasSuffix("ModalHostViewController") { return "Modal" }
     guard isPresentedItself else { return nil }

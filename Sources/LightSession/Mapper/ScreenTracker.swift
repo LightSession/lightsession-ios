@@ -367,7 +367,7 @@ final class ScreenTracker {
         report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
-    /// The four facts `modalLayerName` needs, read off a live controller.
+    /// The five facts `modalLayerName` needs, read off a live controller.
     ///
     /// The identity check is the whole of what went wrong before: `presentingViewController` is
     /// non-nil for anything *inside* a presented stack — UIKit answers with the presenter of the
@@ -392,6 +392,9 @@ final class ScreenTracker {
             className: NSStringFromClass(type(of: controller)),
             isPresentedItself: presentedItself,
             isInScreenWindow: inScreenWindow,
+            // The app already named this presentation from inside it — `lightSessionSubScreen` runs
+            // on the content's `onAppear`, which is earlier than this controller's `viewDidAppear`.
+            isAlreadyNamedByApp: declaredSubScreen != nil,
             shape: shape,
             identifier: identifier
         )
