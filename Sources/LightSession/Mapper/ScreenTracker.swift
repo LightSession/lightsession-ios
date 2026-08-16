@@ -385,9 +385,13 @@ final class ScreenTracker {
         // The view's identifier, because a controller has none. `isViewLoaded` first: asking an
         // unloaded controller for `view` would build a hierarchy from inside an observer.
         let identifier = controller.isViewLoaded ? controller.view.accessibilityIdentifier : nil
+        // The window the screen is being captured from. A controller in any other window — the
+        // keyboard's `UITextEffectsWindow` is the one this was found in — is not a layer over it.
+        let inScreenWindow = controller.isViewLoaded && controller.view.window === keyWindow()
         return modalLayerName(
             className: NSStringFromClass(type(of: controller)),
             isPresentedItself: presentedItself,
+            isInScreenWindow: inScreenWindow,
             shape: shape,
             identifier: identifier
         )

@@ -459,6 +459,22 @@ public enum ModalShape: Equatable, Sendable {
 /// instead: does the presenter's `presentedViewController` point back at *this* controller. That
 /// identity holds only for the controller that was actually presented.
 ///
+/// ## Why the window has to match
+///
+/// `isPresentedItself` is necessary and not sufficient. The system presents things of its own into
+/// windows the app does not own, and those presentations are real — the identity check passes
+/// honestly. Measured in a real app: submitting a login form makes iOS offer to save the password,
+/// and that offer arrives as `UIKeyboardHiddenViewController_Save` presenting
+/// `_SFAppPasswordSavingViewController`, inside `UITextEffectsWindow`, one screen *after* the form.
+/// It became a node called `Modal` hanging off an MFA screen that presents nothing at all.
+///
+/// The picture it carried gave the same answer from the other side: its content is a
+/// `SFPasswordSavingRemoteViewController`, drawn by another process, so walking the app's window
+/// found only the screen underneath — the phantom's wireframe was a copy of its own parent.
+///
+/// A modal layer is a layer *over this screen*. A controller in another window is over a different
+/// window, and whether the person is looking at it is not something this SDK gets to claim.
+///
 /// ## The name
 ///
 /// An `accessibilityIdentifier` if the app set one — the developer naming the thing, fixed by
@@ -467,9 +483,13 @@ public enum ModalShape: Equatable, Sendable {
 public func modalLayerName(
     className: String,
     isPresentedItself: Bool,
+    isInScreenWindow: Bool,
     shape: ModalShape,
     identifier: String?
 ) -> String? {
+    // Before the bridge's own host: a controller somewhere else is not a layer over this screen,
+    // whatever class it is.
+    guard isInScreenWindow else { return nil }
     // React Native's bridge presents its own host; it is a modal whatever the presentation says.
     if className.hasSuffix("ModalHostViewController") { return "Modal" }
     guard isPresentedItself else { return nil }

@@ -23,6 +23,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "_TtGC7SwiftUI19UIHostingControllerVQ_",
                 isPresentedItself: false,
+                isInScreenWindow: true,
                 shape: .other,
                 identifier: nil
             ),
@@ -35,6 +36,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIInputWindowController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
                 shape: .other,
                 identifier: nil
             ),
@@ -47,6 +49,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UINavigationController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
                 shape: .other,
                 identifier: nil
             )
@@ -60,10 +63,45 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
                 shape: .sheet,
                 identifier: nil
             ),
             "the shape says sheet because it inherits the presentation, not because it is one"
+        )
+    }
+
+    /// The one that reached a real app, captured from the device rather than reasoned about.
+    ///
+    /// Submitting a login form makes iOS offer to save the password. The offer is a genuine
+    /// presentation — `UIKeyboardHiddenViewController_Save` presenting
+    /// `_SFAppPasswordSavingViewController` — so the identity check passes honestly. But it lives in
+    /// `UITextEffectsWindow`, the keyboard's own window, and it arrives one screen *after* the form:
+    /// it became a node called `Modal` hanging off an MFA screen whose code presents nothing at all,
+    /// with edges in and out.
+    func testTheSystemsSavePasswordOfferIsNotThisScreensModal() {
+        XCTAssertNil(
+            modalLayerName(
+                className: "UIKeyboardHiddenViewController_Save",
+                isPresentedItself: true,
+                isInScreenWindow: false,
+                shape: .other,
+                identifier: nil
+            ),
+            "a presentation in the keyboard's window is over that window, not over this screen"
+        )
+    }
+
+    /// And the window rule outranks the bridge's class check, which used to answer first.
+    func testEvenTheReactNativeHostMustBeInThisWindow() {
+        XCTAssertNil(
+            modalLayerName(
+                className: "RCTModalHostViewController",
+                isPresentedItself: false,
+                isInScreenWindow: false,
+                shape: .other,
+                identifier: nil
+            )
         )
     }
 
@@ -74,6 +112,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "_TtGC7SwiftUI19UIHostingControllerVQ_",
                 isPresentedItself: true,
+                isInScreenWindow: true,
                 shape: .sheet,
                 identifier: nil
             ),
@@ -86,6 +125,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: true,
+                isInScreenWindow: true,
                 shape: .other,
                 identifier: nil
             ),
@@ -100,6 +140,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "RCTModalHostViewController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
                 shape: .other,
                 identifier: nil
             ),
@@ -115,6 +156,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: true,
+                isInScreenWindow: true,
                 shape: .sheet,
                 identifier: "Filtros"
             ),
@@ -131,6 +173,7 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: true,
+                isInScreenWindow: true,
                 shape: .sheet,
                 identifier: fromARecord
             ),
