@@ -37,6 +37,17 @@ public struct ViewSnapshot: Equatable, Sendable {
     /// Two things follow from it, and both are wrong without it. The node is **stroked**, so the middle
     /// is left for what it surrounds; and it is never an opaque cover, because an outline hides nothing.
     public var drawsBorderOnly: Bool
+    /// Corner radii in points, visual order — top-left, top-right, bottom-right, bottom-left.
+    ///
+    /// `nil` means square, and square is the common case. Read from what the app's own layer
+    /// declares and never assumed: rounding by house style would look right for most apps and be
+    /// confidently wrong for the one that squared its corners on purpose, and inventing UI a
+    /// customer does not have is a failure this SDK has paid for before.
+    ///
+    /// Visual order rather than CoreAnimation's min/max-X naming, because that naming is about the
+    /// coordinate space and the renderer draws pixels. The mapping happens once, where the layer is
+    /// read, so nothing downstream has to know about `CACornerMask` at all.
+    public var cornerRadii: [Double]?
     public var children: [ViewSnapshot]
 
     public init(
@@ -48,6 +59,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         clipsToBounds: Bool = false,
         declaresOpaque: Bool = false,
         drawsBorderOnly: Bool = false,
+        cornerRadii: [Double]? = nil,
         children: [ViewSnapshot] = []
     ) {
         self.frame = frame
@@ -58,6 +70,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         self.clipsToBounds = clipsToBounds
         self.declaresOpaque = declaresOpaque
         self.drawsBorderOnly = drawsBorderOnly
+        self.cornerRadii = cornerRadii
         self.children = children
     }
 }

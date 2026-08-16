@@ -236,7 +236,14 @@ public enum SkeletonBuilder {
                     // Containers outline; everything else fills. A filled container hides its
                     // children, and the children are the screen. A layer that draws only a border is
                     // the same case arriving by another route — see `ViewSnapshot.drawsBorderOnly`.
-                    stroke: node.kind == .container || node.drawsBorderOnly
+                    stroke: node.kind == .container || node.drawsBorderOnly,
+                    // Only when the *whole* rectangle survived clipping. A radius describes the
+                    // corners of the shape the app declared, and a node trimmed by an ancestor is a
+                    // piece of that shape with edges the app never rounded — rounding the offcut
+                    // would carve a curve out of the middle of the screen.
+                    cornerRadii: visible == node.frame
+                        ? node.cornerRadii?.map { Int(($0 * scale).rounded()) }
+                        : nil
                 )
             )
         }

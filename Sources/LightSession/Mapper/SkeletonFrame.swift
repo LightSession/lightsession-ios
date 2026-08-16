@@ -45,6 +45,11 @@ public struct SkeletonNode: Equatable, Sendable {
     public let color: String?
     /// Outline rather than fill. A filled container hides everything inside it.
     public let stroke: Bool
+    /// Corner radii in device pixels, visual order — top-left, top-right, bottom-right, bottom-left.
+    ///
+    /// `nil` means square, which is every rectangle on an ordinary screen. Sent only when the app's
+    /// own shape said so, so nothing here is a house style imposed on somebody's UI.
+    public let cornerRadii: [Int]?
 
     public init(
         left: Int,
@@ -53,7 +58,8 @@ public struct SkeletonNode: Equatable, Sendable {
         bottom: Int,
         kind: NodeKind,
         color: String? = nil,
-        stroke: Bool = false
+        stroke: Bool = false,
+        cornerRadii: [Int]? = nil
     ) {
         self.left = left
         self.top = top
@@ -62,6 +68,7 @@ public struct SkeletonNode: Equatable, Sendable {
         self.kind = kind
         self.color = color
         self.stroke = stroke
+        self.cornerRadii = cornerRadii
     }
 }
 
@@ -111,6 +118,9 @@ extension SkeletonNode {
         if let color { node["color"] = color }
         // Omitted when false, which is most nodes. The server defaults it.
         if stroke { node["stroke"] = true }
+        // `rad`, the name the server reads, omitted unless the app declared a rounded shape —
+        // absent means square on the wire and in the renderer. Four values in visual order.
+        if let cornerRadii { node["rad"] = cornerRadii }
         return node
     }
 }
