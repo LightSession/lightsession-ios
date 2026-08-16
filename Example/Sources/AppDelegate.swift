@@ -13,7 +13,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             .init(
                 // 127.0.0.1 works from the iOS simulator: it shares the host's network stack, unlike the
                 // Android emulator, which needs 10.0.2.2. A real device needs this machine's LAN address.
-                apiKey: "dev-key",
+                apiKey: UserDefaults.standard.string(forKey: "demoApiKey") ?? "dev-key",
                 apiURL: "http://127.0.0.1:3002",
                 // A different service from the API: interaction batches go to the ingest, and pointing one
                 // at the other 404s everything it carries.

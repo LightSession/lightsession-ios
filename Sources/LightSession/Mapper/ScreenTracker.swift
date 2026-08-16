@@ -354,16 +354,62 @@ final class ScreenTracker {
             alertAppeared(alert)
             return
         }
-        guard NSStringFromClass(type(of: controller)).hasSuffix("ModalHostViewController") else { return }
+        guard let label = modalLayerLabel(for: controller) else { return }
         guard let screen = currentScreen else {
             LightSessionLog.debug("a modal appeared before any screen; not a part of anything yet")
             return
         }
         modalHost = controller
-        // `Modal`, not the class name: the class is an implementation detail of the bridge, and every
-        // RN modal would otherwise be a node named after it.
-        modalHostSubScreen = "Modal"
+        modalHostSubScreen = label
         report(screen: screen, kind: .uiKit, transition: "subscreen")
+    }
+
+    /// What to call a modal that appeared while the app is naming its own screens, or `nil` if this
+    /// controller is not a modal at all.
+    ///
+    /// ## The gap this closes
+    ///
+    /// This used to accept exactly two things: a `UIAlertController`, and a class whose name ends in
+    /// `ModalHostViewController` — React Native's bridge. **A SwiftUI `.sheet` is neither**, so it was
+    /// dropped in silence: no sub-screen, not once, in any app that names its own screens. Measured
+    /// against a reproduction of a real app: the sheet went up and came down with nothing reported at
+    /// all, while the alert beside it mapped correctly. And because a sheet shares the window it is
+    /// presented over, its contents landed in the *parent* screen's wireframe — the screen was missing
+    /// and its picture was in the wrong place, from one omission.
+    ///
+    /// The test is presentation, not class. A controller with a `presentingViewController` was put on
+    /// screen *over* something, which is what a modal is; a pushed screen has none, and neither does a
+    /// tab, a child or a root. That covers a SwiftUI sheet, a `fullScreenCover`, a UIKit
+    /// `present(_:animated:)` and whatever the next framework calls its version, without naming any of
+    /// them.
+    ///
+    /// ## The name
+    ///
+    /// An `accessibilityIdentifier` if the app set one — the developer naming the thing, fixed by
+    /// definition. Otherwise a word for the shape: `Sheet` for a sheet, `Modal` for anything else,
+    /// which is what React Native's host has always been called and what its nodes already carry.
+    /// Never anything the modal *says*: a sheet titled with a record's name would mint a node per
+    /// record, which is the trap `alertName` exists to avoid and the same one applies here.
+    private func modalLayerLabel(for controller: UIViewController) -> String? {
+        if NSStringFromClass(type(of: controller)).hasSuffix("ModalHostViewController") {
+            return "Modal"
+        }
+        // Presented over something, rather than pushed into it or contained by it.
+        guard controller.presentingViewController != nil else { return nil }
+        // A controller UIKit presents on the app's behalf — a share sheet, a photo picker, the
+        // keyboard's own hosts. Reported like any other modal: it is genuinely a place the person
+        // is, and refusing to name it would leave the same hole this fixes.
+        // The view's, because a controller has none: identifiers belong to the thing on screen.
+        // `isViewLoaded` first — asking a presented controller for `view` is safe, but asking one
+        // that has not loaded would build a view hierarchy from inside an observer.
+        if controller.isViewLoaded,
+           let declared = ScreenIdentity.subScreenLabel(controller.view.accessibilityIdentifier) {
+            return declared
+        }
+        switch controller.modalPresentationStyle {
+        case .pageSheet, .formSheet: return "Sheet"
+        default: return "Modal"
+        }
     }
 
     /// Identity, not class, for the same reason as `alertLeft` — and independent of it: an alert

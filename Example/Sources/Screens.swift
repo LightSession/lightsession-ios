@@ -96,6 +96,12 @@ final class HubViewController: UIViewController {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: HostNamedScreens())
             }),
+            // A named screen that opens a sheet and an alert — the shape two field reports came
+            // from. Run with `-demoHostNamesScreens 1 -demoNav 1`.
+            Route("hostmodal", "Named screen with a sheet and an alert", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: HostNamedModalScreens())
+            }),
             // A root that swaps its content: the one shape that emits no UIKit event at all.
             Route("routed", "A root switch, named by its route", {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
