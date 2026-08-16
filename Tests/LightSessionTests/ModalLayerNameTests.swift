@@ -23,6 +23,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "_TtGC7SwiftUI19UIHostingControllerVQ_",
                 isPresentedItself: false,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .other,
                 identifier: nil
             ),
@@ -35,6 +37,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIInputWindowController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .other,
                 identifier: nil
             ),
@@ -47,6 +51,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UINavigationController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .other,
                 identifier: nil
             )
@@ -60,10 +66,85 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .sheet,
                 identifier: nil
             ),
             "the shape says sheet because it inherits the presentation, not because it is one"
+        )
+    }
+
+    /// The one that reached a real app, captured from the device rather than reasoned about.
+    ///
+    /// Submitting a login form makes iOS offer to save the password. The offer is a genuine
+    /// presentation — `UIKeyboardHiddenViewController_Save` presenting
+    /// `_SFAppPasswordSavingViewController` — so the identity check passes honestly. But it lives in
+    /// `UITextEffectsWindow`, the keyboard's own window, and it arrives one screen *after* the form:
+    /// it became a node called `Modal` hanging off an MFA screen whose code presents nothing at all,
+    /// with edges in and out.
+    func testTheSystemsSavePasswordOfferIsNotThisScreensModal() {
+        XCTAssertNil(
+            modalLayerName(
+                className: "UIKeyboardHiddenViewController_Save",
+                isPresentedItself: true,
+                isInScreenWindow: false,
+                isAlreadyNamedByApp: false,
+                shape: .other,
+                identifier: nil
+            ),
+            "a presentation in the keyboard's window is over that window, not over this screen"
+        )
+    }
+
+    /// And the window rule outranks the bridge's class check, which used to answer first.
+    func testEvenTheReactNativeHostMustBeInThisWindow() {
+        XCTAssertNil(
+            modalLayerName(
+                className: "RCTModalHostViewController",
+                isPresentedItself: false,
+                isInScreenWindow: false,
+                isAlreadyNamedByApp: false,
+                shape: .other,
+                identifier: nil
+            )
+        )
+    }
+
+    /// The other one from the same app: one presentation counted twice.
+    ///
+    /// A `.sheet` carrying `.lightSessionSubScreen("Trocar empresa")` is noticed by two mechanisms —
+    /// the content's `onAppear` names it, and its hosting controller's `viewDidAppear` arrives here a
+    /// moment later. Both fired, and the map recorded `dispatches › Trocar empresa › Sheet`: a level
+    /// the app does not have, with the developer's own name demoted to a parent of a word invented
+    /// for the same sheet.
+    func testAPresentationTheAppAlreadyNamedGetsNoSecondLayer() {
+        XCTAssertNil(
+            modalLayerName(
+                className: "_TtGC7SwiftUI19UIHostingControllerVQ_",
+                isPresentedItself: true,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: true,
+                shape: .sheet,
+                identifier: nil
+            ),
+            "the app named this sheet from inside it; naming it again for its shape stacks one thing twice"
+        )
+    }
+
+    /// And the guard is about *this* presentation, not about the screen having any named part: with
+    /// nothing declared, the same sheet is still a layer. Otherwise the fix would be "never add one".
+    func testAnUnnamedSheetIsStillALayer() {
+        XCTAssertEqual(
+            modalLayerName(
+                className: "_TtGC7SwiftUI19UIHostingControllerVQ_",
+                isPresentedItself: true,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
+                shape: .sheet,
+                identifier: nil
+            ),
+            "Sheet"
         )
     }
 
@@ -74,6 +155,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "_TtGC7SwiftUI19UIHostingControllerVQ_",
                 isPresentedItself: true,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .sheet,
                 identifier: nil
             ),
@@ -86,6 +169,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: true,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .other,
                 identifier: nil
             ),
@@ -100,6 +185,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "RCTModalHostViewController",
                 isPresentedItself: false,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .other,
                 identifier: nil
             ),
@@ -115,6 +202,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: true,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .sheet,
                 identifier: "Filtros"
             ),
@@ -131,6 +220,8 @@ final class ModalLayerNameTests: XCTestCase {
             modalLayerName(
                 className: "UIViewController",
                 isPresentedItself: true,
+                isInScreenWindow: true,
+                isAlreadyNamedByApp: false,
                 shape: .sheet,
                 identifier: fromARecord
             ),

@@ -108,6 +108,12 @@ final class HubViewController: UIViewController {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: HostNamedPushScreens())
             }),
+            // A sheet the app names itself, over a busier parent — the shape a company switcher
+            // came in, and the one the late-content watch mishandles on the way out.
+            Route("hostsheet", "Named sheet over a busier screen", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: HostNamedSheetScreens())
+            }),
             // The shortest screen an app has: a splash that decides and leaves.
             Route("splash", "A splash that leaves in milliseconds", {
                 guard #available(iOS 16.0, *) else { return UIViewController() }

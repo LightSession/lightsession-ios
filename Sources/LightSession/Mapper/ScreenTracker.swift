@@ -367,7 +367,7 @@ final class ScreenTracker {
         report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
-    /// The four facts `modalLayerName` needs, read off a live controller.
+    /// The five facts `modalLayerName` needs, read off a live controller.
     ///
     /// The identity check is the whole of what went wrong before: `presentingViewController` is
     /// non-nil for anything *inside* a presented stack — UIKit answers with the presenter of the
@@ -385,9 +385,16 @@ final class ScreenTracker {
         // The view's identifier, because a controller has none. `isViewLoaded` first: asking an
         // unloaded controller for `view` would build a hierarchy from inside an observer.
         let identifier = controller.isViewLoaded ? controller.view.accessibilityIdentifier : nil
+        // The window the screen is being captured from. A controller in any other window — the
+        // keyboard's `UITextEffectsWindow` is the one this was found in — is not a layer over it.
+        let inScreenWindow = controller.isViewLoaded && controller.view.window === keyWindow()
         return modalLayerName(
             className: NSStringFromClass(type(of: controller)),
             isPresentedItself: presentedItself,
+            isInScreenWindow: inScreenWindow,
+            // The app already named this presentation from inside it — `lightSessionSubScreen` runs
+            // on the content's `onAppear`, which is earlier than this controller's `viewDidAppear`.
+            isAlreadyNamedByApp: declaredSubScreen != nil,
             shape: shape,
             identifier: identifier
         )
@@ -1244,6 +1251,20 @@ final class ScreenTracker {
                         self.watchForLateContent(
                             window: window, screen: screen, kind: kind, compositeId: compositeId,
                             theme: theme, baseline: baseline, rescansLeft: rescansLeft - 1
+                        )
+                        return
+                    }
+
+                    // Grown, but into something else. A modal closing over a busier screen grows the
+                    // count exactly as arriving content does, and only what the frames *are* tells
+                    // the two apart — see `retainsMostOf`. The watch stops rather than rescanning:
+                    // whatever is on the glass now belongs to a screen this capture is not of, and
+                    // the report that follows will start a watch that fits it.
+                    if !SkeletonBuilder.retainsMostOf(baseline, in: fresh) {
+                        LightSessionLog.debug(
+                            "\(screen) changed into a different screen "
+                                + "(\(baseline.nodes.count) -> \(fresh.nodes.count) rect(s), "
+                                + "almost none of them the same); not resending"
                         )
                         return
                     }
