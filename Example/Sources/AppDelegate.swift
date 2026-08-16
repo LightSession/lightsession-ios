@@ -61,8 +61,25 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         options: UIScene.ConnectionOptions
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
-        let navigation = UINavigationController(rootViewController: HubViewController())
         let window = UIWindow(windowScene: windowScene)
+
+        // `-demoRootRoute splash` puts a route on the glass as the app's own first screen, with no
+        // hub under it and no push.
+        //
+        // Not a convenience. A splash is the shape it is *because* it is the root: it is the first
+        // thing drawn, nothing precedes it, and it replaces itself in place. Reached the ordinary
+        // way — pushed from the hub — a splash is measured through a push animation with the hub
+        // still on screen behind it, which is a different screen, a different timing and the wrong
+        // question. Both were measured here and they do not agree.
+        if let slug = UserDefaults.standard.string(forKey: "demoRootRoute"),
+           let route = HubViewController.route(named: slug) {
+            window.rootViewController = route.make()
+            window.makeKeyAndVisible()
+            self.window = window
+            return
+        }
+
+        let navigation = UINavigationController(rootViewController: HubViewController())
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         self.window = window

@@ -31,6 +31,9 @@ final class ScreenTracker {
     /// cannot cancel each other through shared state. Cancelled together with the watch.
     private let lateSettle = ScreenSettle()
     private let lateContent = LateContentWatch()
+    /// The wireframe of the screen currently on the glass, as it looked when it was named. Sent only
+    /// if that screen leaves before it settles — see `ArrivalCapture`.
+    private var arrival: ArrivalCapture?
     private let appVersionName: String
     private let appVersionCode: Int
 
@@ -754,6 +757,9 @@ final class ScreenTracker {
         // describe the next screen, and recapturing under the old name would file this screen's
         // content as that one's.
         cancelLateContent()
+        // Whatever the screen being replaced is owed. Before the new screen's settle cancels the old
+        // one, which is what used to make a short screen vanish without even a log line.
+        flushArrivalCapture(unless: screen)
         guard let window = keyWindow() else {
             // Not an error worth shouting about: this happens between a scene connecting and its window
             // becoming key, and the next screen will be captured normally.
@@ -767,6 +773,11 @@ final class ScreenTracker {
         // window" is how a heatmap ends up plotted against a capture of something else.
         onWindow?(window)
 
+        // What this screen looked like the moment it was reported, kept in case it does not last
+        // long enough to settle. See `ArrivalCapture`.
+        rememberArrival(screen: screen, kind: kind, window: window)
+        upgradeArrivalAfterLayout(screen: screen)
+
         settle.await(
             signature: {
                 // The window, so a modal's content counts towards "has this settled" too. A sheet
@@ -776,6 +787,8 @@ final class ScreenTracker {
             },
             onSettled: { [weak self] settled in
                 guard let self else { return }
+                // Settled, so the arrival copy is superseded whatever happens below.
+                self.arrival = nil
                 // Deliberately captured either way. A screen that never stops changing — a spinner, a
                 // video — would otherwise never be captured at all, and a wireframe taken mid-animation
                 // is worth more than no wireframe.
@@ -791,6 +804,217 @@ final class ScreenTracker {
                 self.upload(screen: screen, kind: kind, window: window)
             }
         )
+    }
+
+    /// A screen's wireframe as it looked on arrival, held until the settled one supersedes it.
+    ///
+    /// ## The screen this exists for
+    ///
+    /// A splash. It shows a logo, answers one cheap question — is the stored token still valid —
+    /// and replaces itself, all inside a few milliseconds. The settle detector wants three steady
+    /// frames, about fifty; by the time it has them the screen is gone, and the capture is dropped
+    /// for the right reason: uploading then would file the *next* screen's content under this
+    /// name.
+    ///
+    /// So the node existed in the flow with nothing behind it, in two apps, permanently. And it was
+    /// worse than a dropped capture, because the drop was silent: starting a settle cancels the
+    /// previous one, so the callback that would have logged "left before it settled" never ran at
+    /// all.
+    ///
+    /// ## Why arrival, and why it is enough
+    ///
+    /// The screen is on the glass when the app names it — that is what `onAppear` means — so the
+    /// tree read here is that screen and no other. It is the *first* frame rather than the settled
+    /// one, which is exactly the trade the settle detector exists to avoid, and it is the right
+    /// trade only when the alternative is nothing at all: a screen that lasted long enough to
+    /// settle never sends this copy.
+    ///
+    /// A splash is also the screen that loses least by it, being static by construction — it is a
+    /// logo on a colour, identical at millisecond one and at second one.
+    ///
+    /// ## Palette colours, deliberately
+    ///
+    /// Not recoloured. Sampling means drawing the window, which costs what a screenshot costs, on
+    /// every navigation, to serve the rare screen that leaves early. And it could not be done at
+    /// flush time either: by then the window shows the screen that replaced this one, so the
+    /// colours would belong to the wrong screen — which is the whole failure this fixes, arriving
+    /// by another road.
+    private struct ArrivalCapture {
+        let screen: String
+        let kind: ScreenIdentity.Kind
+        let compositeId: String
+        let theme: Theme
+        let frame: SkeletonFrame
+        /// What the content signature counted when this copy was taken. The bar a later frame has
+        /// to clear to replace it.
+        let contentCount: Int
+    }
+
+    /// Reads the screen once more at the start of the next runloop turn, and raises the held copy if
+    /// there is more of it by then.
+    ///
+    /// The display link's first tick is a frame away, and a splash that resolves a stored token
+    /// leaves before it. `onAppear` runs *inside* SwiftUI's update pass, so the copy taken there is
+    /// pre-layout — measured against the real thing, an indigo screen with a word on it came out as
+    /// black with one stray bar near the top. The commit that ends this turn is what draws the
+    /// screen; a block dispatched from inside the pass runs just after that commit, which for a
+    /// one-turn screen is the only moment it exists as pixels and is still the current screen.
+    ///
+    /// Cheap enough to do on every navigation: one tree walk and one frame build, no `drawHierarchy`,
+    /// and the frame is only rebuilt when the content count has actually grown.
+    private func upgradeArrivalAfterLayout(screen: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.lastReported == screen, let window = self.keyWindow() else { return }
+            let snapshot = self.arrivalSnapshot(in: window)
+            self.refreshArrival(
+                screen: screen,
+                from: snapshot,
+                count: SkeletonBuilder.contentSignature(snapshot).count,
+                window: window
+            )
+        }
+    }
+
+    /// The view the arriving screen occupies, which is deliberately *not* the window.
+    ///
+    /// The window is right for a settled capture, and `UIWindow.lightSessionContent` says why: a
+    /// sheet over a screen is part of what is on the glass. It is wrong here, because the arrival
+    /// copy is read *during* a transition. Measured on the sample: a splash pushed onto the hub,
+    /// read one runloop turn after `onAppear`, returned thirty-six rectangles of the hub — the push
+    /// animation had not finished, so the outgoing screen was still in the window — and they were
+    /// filed under the splash's name. That is the failure this whole mechanism exists to avoid,
+    /// arriving from the other side.
+    ///
+    /// A screen that leaves before it settles has nothing over it worth capturing. What it has
+    /// underneath it is another screen, and this is what excludes it.
+    func arrivalRoot(in window: UIWindow) -> UIView {
+        var controller = window.rootViewController
+        // Presented first, then containers, repeatedly: a sheet can hold a navigation stack, and a
+        // stack can present. Identity-checked so a controller that reports itself cannot spin here.
+        while true {
+            let next = controller?.presentedViewController
+                ?? (controller as? UINavigationController)?.topViewController
+                ?? (controller as? UITabBarController)?.selectedViewController
+            guard let next, next !== controller else { break }
+            controller = next
+        }
+        guard let controller, controller.isViewLoaded, controller.view.window === window else {
+            return window
+        }
+        return controller.view
+    }
+
+    /// The arriving screen's own tree, carrying the *window's* dimensions.
+    ///
+    /// Two separate facts, and conflating them cost a bogus capture. `SkeletonBuilder` takes both
+    /// what to draw and how big the screen is from the root it is handed — right when that root is
+    /// the window, wrong here, because a view read mid-transition is not the size of the screen.
+    /// Measured on the sample: the hub's arrival copy reported 516×960, and the server filed it as
+    /// a *variant* of the hub beside the real 1206×2622 one, since a capture is keyed by its size.
+    /// A screen is the size of the window whichever subtree was read for its contents.
+    private func arrivalSnapshot(in window: UIWindow) -> ViewSnapshot {
+        let root = arrivalRoot(in: window)
+        let content = root.lightSessionSnapshot(in: window)
+        guard root !== window else { return content }
+        return ViewSnapshot(
+            frame: window.lightSessionFrame(in: window),
+            kind: .container,
+            children: [content]
+        )
+    }
+
+    /// Raises the held copy to a richer one.
+    private func refreshArrival(screen: String, from snapshot: ViewSnapshot, count: Int, window: UIWindow) {
+        guard let held = arrival, held.screen == screen, count > held.contentCount else { return }
+        guard let frame = SkeletonBuilder.build(
+            root: snapshot,
+            scale: Double(window.screen.scale),
+            background: window.lightSessionBackground,
+            overlay: screen.contains(ScreenIdentity.subScreenSeparator)
+        ) else { return }
+        arrival = ArrivalCapture(
+            screen: held.screen,
+            kind: held.kind,
+            compositeId: held.compositeId,
+            theme: held.theme,
+            frame: frame,
+            contentCount: count
+        )
+    }
+
+    private func rememberArrival(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
+        let snapshot = arrivalSnapshot(in: window)
+        guard let frame = SkeletonBuilder.build(
+            root: snapshot,
+            scale: Double(window.screen.scale),
+            background: window.lightSessionBackground,
+            overlay: screen.contains(ScreenIdentity.subScreenSeparator)
+        ) else {
+            arrival = nil
+            return
+        }
+        let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        arrival = ArrivalCapture(
+            screen: screen,
+            kind: kind,
+            compositeId: ScreenIdentity.compositeId(
+                name: screen,
+                appVersionName: appVersionName,
+                appVersionCode: appVersionCode,
+                width: frame.width,
+                height: frame.height,
+                theme: theme
+            ),
+            theme: theme,
+            frame: frame,
+            contentCount: SkeletonBuilder.contentSignature(snapshot).count
+        )
+    }
+
+    /// Sends the held arrival copy, unless the screen being reported now is the one holding it —
+    /// a repeat report of the same screen is not a departure.
+    private func flushArrivalCapture(unless incoming: String) {
+        guard let held = arrival, held.screen != incoming else { return }
+        arrival = nil
+
+        // Through the same bar as any other capture: a screen whose settled wireframe already
+        // landed on an earlier visit is richer than this one, and must not be replaced by it.
+        let state = cache.state(forCapture: held.compositeId)
+        guard held.frame.nodes.count > state.wireframeRects else {
+            LightSessionLog.debug(
+                "\(held.screen) left before it settled; the stored wireframe is richer, keeping it"
+            )
+            return
+        }
+
+        LightSessionLog.debug(
+            "\(held.screen) left before it settled; sending the wireframe it had on arrival "
+                + "(\(held.frame.nodes.count) node(s))"
+        )
+        let report = ScreenReport(
+            compositeId: held.compositeId,
+            name: held.screen,
+            kind: held.kind,
+            skeleton: held.frame,
+            imageBase64: nil,
+            width: held.frame.width,
+            height: held.frame.height,
+            density: Double(keyWindow()?.screen.scale ?? 1),
+            theme: held.theme,
+            appVersionName: appVersionName,
+            appVersionCode: appVersionCode
+        )
+        sender.send(screen: report) { [weak self] result in
+            switch result {
+            case .success:
+                self?.cache.recordWireframe(forCapture: held.compositeId, rects: held.frame.nodes.count)
+                LightSessionLog.debug("wireframe sent: \(held.screen) (on arrival)")
+            case .failure(let error):
+                LightSessionLog.error(
+                    "wireframe \(held.screen) failed: \(error.localizedDescription)"
+                )
+            }
+        }
     }
 
     private func refinePlan(for window: UIWindow) {
