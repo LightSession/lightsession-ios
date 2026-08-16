@@ -55,7 +55,7 @@ enum ScreenshotRenderer {
             // Android the equivalent — forcing a draw — was measurable in the app's own frame timing.
             window.drawHierarchy(in: bounds, afterScreenUpdates: false)
 
-            cg.setFillColor(UIColor.systemGray3.cgColor)
+            cg.setFillColor(maskFill(for: window))
             var rects = maskRects(in: snapshot, policy: policy, bounds: bounds)
             if let alsoMaskedBy {
                 rects += maskRects(in: alsoMaskedBy, policy: policy, bounds: bounds)
@@ -109,18 +109,40 @@ enum ScreenshotRenderer {
             scale: window.screen.scale,
             draw: { cg in
                 window.drawHierarchy(in: bounds, afterScreenUpdates: false)
-                cg.setFillColor(UIColor.systemGray3.cgColor)
+                cg.setFillColor(maskFill(for: window))
                 for rect in maskRects(in: snapshot, policy: policy, bounds: bounds) {
                     cg.fill(rect)
                 }
             },
-            sample: { pixels in Recolour.apply(frame, sampling: pixels) }
+            sample: { pixels in
+                Recolour.apply(frame, sampling: pixels, maskingOn: policy.text || policy.images)
+            }
         )
         guard let sampled else {
             LightSessionLog.debug("no pixels to sample colours from; keeping the palette")
             return frame
         }
         return sampled
+    }
+
+    /// The grey the mask paints, as the literal `Recolour` compares against.
+    ///
+    /// This used to be `UIColor.systemGray3.cgColor`, which is dynamic: it resolves against whatever
+    /// trait collection happens to be current on the calling thread, not against the window being
+    /// captured — the same screen could mask light in one capture and dark in the next. Resolving by
+    /// the window's own appearance makes the paint deterministic, and painting `Recolour`'s literals
+    /// is what entitles it to recognise its own grey when a sampled surface turns out to be mostly
+    /// mask. The values are `systemGray3`'s two variants, so nothing changes visually.
+    private static func maskFill(for window: UIWindow) -> CGColor {
+        let fill = window.traitCollection.userInterfaceStyle == .dark
+            ? Recolour.maskFillDark
+            : Recolour.maskFillLight
+        return UIColor(
+            red: CGFloat(fill.red) / 255,
+            green: CGFloat(fill.green) / 255,
+            blue: CGFloat(fill.blue) / 255,
+            alpha: 1
+        ).cgColor
     }
 
     /// Pixels as a JPEG. Safe off the main thread: nothing here reads a view.

@@ -44,10 +44,14 @@ public enum SkeletonBuilder {
     ///     screenshot path is pixels, and one screen must not be two sizes depending on which
     ///     capture arrived first.
     ///   - background: the window's own background, drawn under everything.
+    /// - Parameter overlay: this capture is of a modal sub-screen — a dialog, a sheet — and the
+    ///   scrim rule applies. See [isFullFrameFill(_:width:height:)] for what it drops and why it is
+    ///   confined to overlays.
     public static func build(
         root: ViewSnapshot,
         scale: Double,
-        background: Color?
+        background: Color?,
+        overlay: Bool = false
     ) -> SkeletonFrame? {
         guard !root.frame.isEmpty else { return nil }
 
@@ -64,12 +68,43 @@ public enum SkeletonBuilder {
                 captureBounds: captureBounds, into: &nodes)
 
         let pixels = root.frame.toPixels(scale: scale)
+        let width = pixels.right - pixels.left
+        let height = pixels.bottom - pixels.top
+        if overlay {
+            nodes.removeAll { isFullFrameFill($0, width: width, height: height) }
+        }
         return SkeletonFrame(
-            width: pixels.right - pixels.left,
-            height: pixels.bottom - pixels.top,
+            width: width,
+            height: height,
             background: background?.hex,
             nodes: nodes
         )
+    }
+
+    /// A filled node the size of the whole capture, which on an overlay is the scrim.
+    ///
+    /// Measured on a real alert: the dimming view arrives as a full-window *filled* `UNKNOWN`,
+    /// painted after the page's nodes and before the alert's — so the wireframe was the page buried
+    /// under a slab, with the alert's own labels invisible on top of it in a near-identical grey.
+    /// The scrim is not part of the modal; it is the previous screen being dimmed.
+    ///
+    /// Confined to overlay captures, exactly as the Android SDK confines it: on an ordinary screen a
+    /// full-frame fill is usually the page's own background, which is a real surface and correct to
+    /// keep. And confined to kinds that carry no meaning of their own — a full-screen *image* is a
+    /// photo viewer, not chrome.
+    public static func isFullFrameFill(_ node: SkeletonNode, width: Int, height: Int) -> Bool {
+        guard !node.stroke, node.kind == .unknown || node.kind == .container else { return false }
+        let area = Double(max(0, node.right - node.left)) * Double(max(0, node.bottom - node.top))
+        let whole = Double(width) * Double(height)
+        return whole > 0 && area / whole >= 0.98
+    }
+
+    /// Whether a frame carries a scrim-shaped node — the sign that a modal was on screen when it
+    /// was read. Used by the late-content watch to tell "the content arrived" apart from "something
+    /// opened on top", which look identical to a signature and could not be less alike as reasons
+    /// to replace a screen's wireframe.
+    public static func containsFullFrameFill(_ frame: SkeletonFrame) -> Bool {
+        frame.nodes.contains { isFullFrameFill($0, width: frame.width, height: frame.height) }
     }
 
     /// How many views in this tree actually draw something.

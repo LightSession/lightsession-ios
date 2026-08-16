@@ -99,7 +99,30 @@ enum Recolour {
     /// half scale is half the size of the geometry describing it. Scaled here rather than requiring the
     /// caller to match them, because the caller that gets it wrong produces a wireframe coloured from
     /// the wrong parts of the screen and nothing says so.
-    static func apply<Pixels: PixelSource>(_ frame: SkeletonFrame, sampling pixels: Pixels) -> SkeletonFrame {
+    /// The two greys the mask paints, one per appearance — `systemGray3` resolved for light and
+    /// dark. Literals rather than `UIColor`, for the reason the whole type is pure: the comparison
+    /// below runs in plain unit tests, and a dynamic colour resolves differently on a developer's
+    /// machine than on a device. `ScreenshotRenderer` paints with these same values, so the painter
+    /// and this comparator cannot drift apart.
+    static let maskFillLight: (red: Int, green: Int, blue: Int) = (199, 199, 204)
+    static let maskFillDark: (red: Int, green: Int, blue: Int) = (72, 72, 74)
+
+    /// Whether a sampled colour is the mask's own paint, compared within a histogram bucket —
+    /// sampling answers with a bucket's mid-point, so an exact match would never fire.
+    static func isMaskPaint(red: Int, green: Int, blue: Int) -> Bool {
+        func bucket(_ r: Int, _ g: Int, _ b: Int) -> Int {
+            (r >> levelsShift) << 10 | (g >> levelsShift) << 5 | (b >> levelsShift)
+        }
+        let sampled = bucket(red, green, blue)
+        return sampled == bucket(maskFillLight.red, maskFillLight.green, maskFillLight.blue)
+            || sampled == bucket(maskFillDark.red, maskFillDark.green, maskFillDark.blue)
+    }
+
+    static func apply<Pixels: PixelSource>(
+        _ frame: SkeletonFrame,
+        sampling pixels: Pixels,
+        maskingOn: Bool
+    ) -> SkeletonFrame {
         guard pixels.width > 0, pixels.height > 0, frame.width > 0, frame.height > 0 else { return frame }
 
         let scaleX = Double(pixels.width) / Double(frame.width)
@@ -129,6 +152,20 @@ enum Recolour {
             // better than painting it transparent.
             guard let sampled else { return node }
 
+            // The mask is ours, not the app's. A node that *contains* redacted text is not grey; it
+            // contains somebody else's redaction — measured on a real alert, whose material adopted
+            // the mask's grey and buried its own labels in the same colour. So a sampled mask colour
+            // never becomes a surface, except on the kinds that *are* the masked thing — text, input,
+            // image — where grey is honestly what the screen shows and what the wireframe has always
+            // drawn. Only while masking is on: with it off, nothing paints that grey but the app, and
+            // a genuinely grey card is allowed to be grey.
+            if maskingOn,
+               node.kind != .text, node.kind != .input, node.kind != .image,
+               let (red, green, blue) = rgb(fromHex: sampled),
+               isMaskPaint(red: red, green: green, blue: blue) {
+                return node
+            }
+
             return SkeletonNode(
                 left: node.left,
                 top: node.top,
@@ -136,7 +173,11 @@ enum Recolour {
                 bottom: node.bottom,
                 kind: node.kind,
                 color: sampled,
-                stroke: node.stroke
+                stroke: node.stroke,
+                // Carried through, not rebuilt without: recolouring changes a node's colour and has
+                // no opinion about its corners — dropping them here made every rounded dialog square
+                // again the moment sampling was on.
+                cornerRadii: node.cornerRadii
             )
         }
         return SkeletonFrame(
@@ -224,6 +265,13 @@ enum Recolour {
             green: totalGreen / counted,
             blue: totalBlue / counted
         )
+    }
+
+    /// The inverse of [hex(red:green:blue:)], for the one comparison that needs the numbers back.
+    private static func rgb(fromHex value: String) -> (Int, Int, Int)? {
+        guard value.hasPrefix("#"), value.count == 7,
+              let bits = Int(value.dropFirst(), radix: 16) else { return nil }
+        return ((bits >> 16) & 0xFF, (bits >> 8) & 0xFF, bits & 0xFF)
     }
 
     /// `#RRGGBB`, which is what the wire format takes and what the renderer parses.

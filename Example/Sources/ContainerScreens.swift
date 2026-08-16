@@ -151,7 +151,11 @@ final class AlertOverScreen: UIViewController {
             )
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
             self.present(alert, animated: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            // How long the alert stays up. Overridable because the late-content watch ticks at
+            // one hertz, and reproducing a race against it needs several ticks with the alert
+            // on screen — two seconds is at most two.
+            let hold = UserDefaults.standard.double(forKey: "demoAlertHold")
+            DispatchQueue.main.asyncAfter(deadline: .now() + (hold > 0 ? hold : 2)) {
                 print("[demo] alert down")
                 alert.dismiss(animated: true)
             }

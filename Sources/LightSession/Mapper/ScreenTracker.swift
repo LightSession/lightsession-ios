@@ -786,7 +786,10 @@ final class ScreenTracker {
         guard let built = SkeletonBuilder.build(
             root: snapshot,
             scale: scale,
-            background: window.lightSessionBackground
+            background: window.lightSessionBackground,
+            // A sub-screen capture is an overlay, and an overlay's full-frame fill is the scrim —
+            // the previous screen being dimmed, not part of the modal. See `isFullFrameFill`.
+            overlay: screen.contains(ScreenIdentity.subScreenSeparator)
         ) else {
             LightSessionLog.debug("\(screen) has no drawable area; capture dropped")
             return
@@ -977,8 +980,25 @@ final class ScreenTracker {
                     guard let fresh = SkeletonBuilder.build(
                         root: snapshot,
                         scale: Double(window.screen.scale),
-                        background: window.lightSessionBackground
+                        background: window.lightSessionBackground,
+                        overlay: screen.contains(ScreenIdentity.subScreenSeparator)
                     ) else { return }
+
+                    // A scrim that was not in the baseline is a modal arriving, not content: on this
+                    // platform a dialog shares the capture's window, so the watch can see one before
+                    // the modal layer has reported it — and resending here would file the dialog's
+                    // picture under the screen it merely covers. Android's watch is immune to this by
+                    // accident of platform: a dialog there is its own window, and the recapture never
+                    // contains it. The budget is spent, because a screen with a modal in flight has
+                    // been examined; the report that follows will cancel this watch by the usual path.
+                    if SkeletonBuilder.containsFullFrameFill(fresh),
+                       !SkeletonBuilder.containsFullFrameFill(baseline) {
+                        self.watchForLateContent(
+                            window: window, screen: screen, kind: kind, compositeId: compositeId,
+                            theme: theme, baseline: baseline, rescansLeft: rescansLeft - 1
+                        )
+                        return
+                    }
 
                     if SkeletonBuilder.sameGeometry(fresh, baseline) {
                         // Changed and settled back to the same layout — a clock tick, a refresh that
