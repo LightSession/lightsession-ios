@@ -427,3 +427,55 @@ public func planScreenSource(
         adviseIfSilent: hostsSwiftUI
     )
 }
+
+/// How a modal presents, as the wire and the reader care about it.
+///
+/// Mirrors the cases of `UIModalPresentationStyle` that change the answer, and nothing else. An enum
+/// rather than the raw integer so a test states what it means, and so this file stays free of UIKit.
+public enum ModalShape: Equatable, Sendable {
+    /// `.pageSheet` or `.formSheet` — a card over the screen.
+    case sheet
+    /// Anything else presented: full screen, a cover, a custom transition.
+    case other
+}
+
+/// What to call a modal layer that appeared while the app names its own screens, or `nil` when this
+/// controller is not one.
+///
+/// ## Why this is a pure function
+///
+/// Its first version read `UIViewController` directly and shipped a regression that no test could
+/// have caught, because there was no test: a *pushed* screen was reported as a modal. Everything the
+/// decision needs is four facts, so the decision takes four facts — the same reasoning
+/// `actionForObservedController` above already states, which this should have followed the first
+/// time.
+///
+/// ## What `isPresentedItself` has to mean
+///
+/// Not "has a presenting view controller". `presentingViewController` is non-nil for *anything
+/// inside* a presented stack — UIKit answers with the presenter of the farthest presented ancestor —
+/// so a screen pushed inside a presented navigation controller reports one, and a keyboard host
+/// nested in someone else's presentation reports one too. The caller must ask the exact question
+/// instead: does the presenter's `presentedViewController` point back at *this* controller. That
+/// identity holds only for the controller that was actually presented.
+///
+/// ## The name
+///
+/// An `accessibilityIdentifier` if the app set one — the developer naming the thing, fixed by
+/// definition. Otherwise a word for the shape, never anything the modal *says*: a sheet titled with
+/// a record's name would mint a node per record, which is the trap `alertName` exists to avoid.
+public func modalLayerName(
+    className: String,
+    isPresentedItself: Bool,
+    shape: ModalShape,
+    identifier: String?
+) -> String? {
+    // React Native's bridge presents its own host; it is a modal whatever the presentation says.
+    if className.hasSuffix("ModalHostViewController") { return "Modal" }
+    guard isPresentedItself else { return nil }
+    if let declared = ScreenIdentity.subScreenLabel(identifier) { return declared }
+    switch shape {
+    case .sheet: return "Sheet"
+    case .other: return "Modal"
+    }
+}
