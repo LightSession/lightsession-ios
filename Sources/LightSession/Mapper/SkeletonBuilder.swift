@@ -159,6 +159,52 @@ public enum SkeletonBuilder {
         }
     }
 
+    /// Whether `fresh` is still a picture of the same screen `baseline` was — the test the
+    /// late-content watch applies before it replaces one capture with another.
+    ///
+    /// Late content is **additive**. A list that finishes loading keeps its heading, its search box
+    /// and whatever rows it already had, exactly where they were, and gains more below. So a
+    /// recapture that grew is only believable as late content if most of what it replaces is still
+    /// in it.
+    ///
+    /// Growth alone is not enough, and trusting it cost a stored capture. A sheet closing over a
+    /// busier screen also grows: the screen behind has more rectangles than the sheet did, so
+    /// "content arrived" and "the modal left" look identical by count. Measured on a real company
+    /// switcher — a correct capture of the sheet, 57 rectangles, was replaced by 89 rectangles of the
+    /// list behind it, filed under the sheet's name. Not one of the sheet's rectangles survived into
+    /// that recapture, which is the difference this reads.
+    ///
+    /// Deliberately not a timing rule. The first attempt at this raced the platform — cancel the
+    /// watch the moment the modal's controller disappears — and lost in the real app, because
+    /// SwiftUI updates its binding after the dismissal and the watch ticks in between. What a capture
+    /// *contains* is knowable without knowing when anything happened.
+    public static func retainsMostOf(_ baseline: SkeletonFrame, in fresh: SkeletonFrame) -> Bool {
+        guard !baseline.nodes.isEmpty else { return true }
+        var survivors: Set<Key> = []
+        for node in fresh.nodes { survivors.insert(Key(node)) }
+        let kept = baseline.nodes.reduce(into: 0) { total, node in
+            if survivors.contains(Key(node)) { total += 1 }
+        }
+        // Half, not all: a screen may legitimately reflow when content lands — a row growing to two
+        // lines pushes everything under it — and demanding every rectangle survive would refuse the
+        // upgrades this watch exists to make.
+        return Double(kept) >= Double(baseline.nodes.count) * 0.5
+    }
+
+    /// A node's identity for the comparison above: where it is and what it is, not what colour.
+    private struct Key: Hashable {
+        let left: Int, top: Int, right: Int, bottom: Int
+        let kind: NodeKind
+
+        init(_ node: SkeletonNode) {
+            left = node.left
+            top = node.top
+            right = node.right
+            bottom = node.bottom
+            kind = node.kind
+        }
+    }
+
     private static func fold(_ node: ViewSnapshot, into count: inout Int, _ geometry: inout Int64) {
         guard isVisible(node) else { return }
         switch node.kind {

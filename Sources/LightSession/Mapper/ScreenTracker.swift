@@ -1255,6 +1255,20 @@ final class ScreenTracker {
                         return
                     }
 
+                    // Grown, but into something else. A modal closing over a busier screen grows the
+                    // count exactly as arriving content does, and only what the frames *are* tells
+                    // the two apart — see `retainsMostOf`. The watch stops rather than rescanning:
+                    // whatever is on the glass now belongs to a screen this capture is not of, and
+                    // the report that follows will start a watch that fits it.
+                    if !SkeletonBuilder.retainsMostOf(baseline, in: fresh) {
+                        LightSessionLog.debug(
+                            "\(screen) changed into a different screen "
+                                + "(\(baseline.nodes.count) -> \(fresh.nodes.count) rect(s), "
+                                + "almost none of them the same); not resending"
+                        )
+                        return
+                    }
+
                     if SkeletonBuilder.sameGeometry(fresh, baseline) {
                         // Changed and settled back to the same layout — a clock tick, a refresh that
                         // found nothing. Watch again; the budget bounds what this can cost.
