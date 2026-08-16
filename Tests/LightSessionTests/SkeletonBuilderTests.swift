@@ -526,3 +526,72 @@ final class SameGeometryTests: XCTestCase {
         XCTAssertFalse(SkeletonBuilder.sameGeometry(a, b))
     }
 }
+
+/// Corners: read from what the app declared, carried to the wire, dropped when they would lie.
+final class CornerRadiusTests: XCTestCase {
+
+    private func rect(_ l: Double, _ t: Double, _ r: Double, _ b: Double) -> Rect {
+        Rect(left: l, top: t, right: r, bottom: b)
+    }
+
+    func testARoundedNodeCarriesItsRadiiInPixels() {
+        let root = ViewSnapshot(
+            frame: rect(0, 0, 100, 100),
+            kind: .container,
+            children: [
+                ViewSnapshot(
+                    frame: rect(10, 10, 90, 60),
+                    kind: .card,
+                    color: Color(red: 0.5, green: 0.5, blue: 0.5, alpha: 1),
+                    cornerRadii: [8, 8, 0, 0]
+                )
+            ]
+        )
+        let nodes = SkeletonBuilder.build(root: root, scale: 2, background: nil)?.nodes ?? []
+        let card = nodes.first { $0.kind == .card }
+        XCTAssertEqual(card?.cornerRadii, [16, 16, 0, 0], "points become device pixels, like every other measure")
+    }
+
+    func testASquareNodeSendsNothing() {
+        let root = ViewSnapshot(
+            frame: rect(0, 0, 100, 100),
+            kind: .container,
+            children: [ViewSnapshot(frame: rect(0, 0, 50, 50), kind: .text)]
+        )
+        let nodes = SkeletonBuilder.build(root: root, scale: 1, background: nil)?.nodes ?? []
+        XCTAssertNil(
+            nodes.first { $0.kind == .text }?.cornerRadii,
+            "absent means square, and square is the common case"
+        )
+    }
+
+    /// A node trimmed by a clipping ancestor is a piece of the app's shape, with edges the app
+    /// never rounded. Rounding the offcut would carve a curve out of the middle of the screen.
+    func testAClippedNodeLosesItsRadii() {
+        let root = ViewSnapshot(
+            frame: rect(0, 0, 100, 50),
+            kind: .container,
+            clipsToBounds: true,
+            children: [
+                ViewSnapshot(
+                    frame: rect(0, 0, 100, 200),
+                    kind: .card,
+                    color: Color(red: 0.5, green: 0.5, blue: 0.5, alpha: 1),
+                    cornerRadii: [12, 12, 12, 12]
+                )
+            ]
+        )
+        let nodes = SkeletonBuilder.build(root: root, scale: 1, background: nil)?.nodes ?? []
+        XCTAssertNil(nodes.first { $0.kind == .card }?.cornerRadii)
+    }
+
+    func testTheWireOmitsRadUnlessThereAreCorners() {
+        let square = SkeletonNode(left: 0, top: 0, right: 10, bottom: 10, kind: .text)
+        XCTAssertNil(square.jsonObject["rad"])
+
+        let round = SkeletonNode(
+            left: 0, top: 0, right: 10, bottom: 10, kind: .card, cornerRadii: [4, 4, 0, 0]
+        )
+        XCTAssertEqual(round.jsonObject["rad"] as? [Int], [4, 4, 0, 0], "the name the server reads")
+    }
+}

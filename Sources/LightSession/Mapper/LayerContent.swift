@@ -79,6 +79,7 @@ enum LayerContent {
                 clipsToBounds: layer.masksToBounds,
                 declaresOpaque: layer.isOpaque,
                 drawsBorderOnly: outlineOnly,
+                cornerRadii: layer.lightSessionCornerRadii,
                 children: below
             )
         ]
@@ -126,6 +127,49 @@ enum LayerContent {
 protocol UIViewLike: AnyObject {}
 
 extension CALayer {
+
+    /// The corners this layer declares, in visual order, or `nil` when it is square.
+    ///
+    /// ## Read, never assumed
+    ///
+    /// Rounding a dialog or a sheet by house style would look right for most apps and be
+    /// confidently wrong for the one that squared its corners on purpose, and inventing UI a
+    /// customer does not have is a failure this SDK has paid for before. So this reports what the
+    /// app's own layer says and nothing else.
+    ///
+    /// ## What that leaves out, deliberately
+    ///
+    /// Measured in `ModalCornerProbeTest`: a `UIAlertController` declares 34 points on all four
+    /// corners of its own view's layer, and a `.pageSheet` declares **nothing** — its rounding is
+    /// applied by the presentation machinery outside the app's view. So an alert is reported round
+    /// and a sheet is reported square.
+    ///
+    /// A sheet could be made to look right by hard-coding the system's radius, and that is the same
+    /// mistake as rounding by default approached from the other side: a number Apple owns and
+    /// changes between releases, applied to a shape the app never declared. A square outline is
+    /// wrong by a corner; an invented one is wrong about whose UI it is.
+    ///
+    /// ## The mask
+    ///
+    /// `maskedCorners` names corners after the coordinate space — `MinXMinY` and friends — and this
+    /// translates once, here, into the visual order the wire uses, so nothing downstream has to know
+    /// `CACornerMask` exists. An unmasked corner is square even when `cornerRadius` is set, which is
+    /// exactly how a bottom sheet rounds its top two.
+    var lightSessionCornerRadii: [Double]? {
+        let radius = Double(cornerRadius)
+        guard radius > 0 else { return nil }
+        let mask = maskedCorners
+        let radii = [
+            mask.contains(.layerMinXMinYCorner) ? radius : 0,  // top-left
+            mask.contains(.layerMaxXMinYCorner) ? radius : 0,  // top-right
+            mask.contains(.layerMaxXMaxYCorner) ? radius : 0,  // bottom-right
+            mask.contains(.layerMinXMaxYCorner) ? radius : 0,  // bottom-left
+        ]
+        // A radius with every corner masked out is a square, and saying so with four zeroes would
+        // put a field on the wire that means nothing.
+        return radii.contains(where: { $0 > 0 }) ? radii : nil
+    }
+
     /// This layer's rectangle in the window, as it is **on screen right now**.
     ///
     /// Presented geometry, not model geometry, and that distinction is why this is not one line.

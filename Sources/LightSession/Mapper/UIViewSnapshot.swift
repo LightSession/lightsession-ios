@@ -33,6 +33,8 @@ extension UIView {
             color: lightSessionBackgroundColor,
             clipsToBounds: clipsToBounds,
             declaresOpaque: isOpaque,
+            // A view's corners live on its layer, which is also where an app sets them.
+            cornerRadii: layer.lightSessionCornerRadii,
             children: lightSessionChildrenInPaintOrder(in: window)
         )
     }
