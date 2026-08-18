@@ -364,10 +364,17 @@ final class ScreenTracker {
         }
         modalHost = controller
         modalHostSubScreen = label
+        // The class, because the name usually is not enough to know what became a layer: `Sheet` and
+        // `Modal` are words for a shape, and two different presentations of the same shape read
+        // identically in a log that only prints the name.
+        LightSessionLog.debug(
+            "modal layer \"\(label)\" from \(type(of: controller)) "
+                + "style=\(controller.modalPresentationStyle.rawValue)"
+        )
         report(screen: screen, kind: .uiKit, transition: "subscreen")
     }
 
-    /// The five facts `modalLayerName` needs, read off a live controller.
+    /// The facts `modalLayerName` needs, read off a live controller.
     ///
     /// The identity check is the whole of what went wrong before: `presentingViewController` is
     /// non-nil for anything *inside* a presented stack — UIKit answers with the presenter of the
@@ -377,11 +384,6 @@ final class ScreenTracker {
     /// that really was presented.
     private func modalLayerLabel(for controller: UIViewController) -> String? {
         let presentedItself = controller.presentingViewController?.presentedViewController === controller
-        let shape: ModalShape
-        switch controller.modalPresentationStyle {
-        case .pageSheet, .formSheet: shape = .sheet
-        default: shape = .other
-        }
         // The view's identifier, because a controller has none. `isViewLoaded` first: asking an
         // unloaded controller for `view` would build a hierarchy from inside an observer.
         let identifier = controller.isViewLoaded ? controller.view.accessibilityIdentifier : nil
@@ -395,8 +397,34 @@ final class ScreenTracker {
             // The app already named this presentation from inside it — `lightSessionSubScreen` runs
             // on the content's `onAppear`, which is earlier than this controller's `viewDidAppear`.
             isAlreadyNamedByApp: declaredSubScreen != nil,
-            shape: shape,
+            presentation: Self.presentation(of: controller),
             identifier: identifier
+        )
+    }
+
+    /// What the app declared about this presentation.
+    ///
+    /// Only what the app set, never what is on screen: the same values on the first frame as on the
+    /// last, and the same on every launch, which is what a permanent screen name needs. A sheet's
+    /// configuration lives on its `sheetPresentationController` and is absent for everything else.
+    private static func presentation(of controller: UIViewController) -> ModalPresentation {
+        let styleRaw = controller.modalPresentationStyle.rawValue
+        guard #available(iOS 15.0, *), let sheet = controller.sheetPresentationController else {
+            return ModalPresentation(styleRaw: styleRaw)
+        }
+        let detents: [String]
+        if #available(iOS 16.0, *) {
+            detents = sheet.detents.map(\.identifier.rawValue)
+        } else {
+            // Before the identifiers existed there were only two possible detents and no way to name
+            // them; the count is all this version can honestly report.
+            detents = sheet.detents.map { _ in "detent" }
+        }
+        return ModalPresentation(
+            styleRaw: styleRaw,
+            detentIdentifiers: detents,
+            prefersGrabberVisible: sheet.prefersGrabberVisible,
+            cornerRadius: sheet.preferredCornerRadius.map(Double.init)
         )
     }
 
@@ -1535,6 +1563,7 @@ final class ScreenTracker {
         }
     }
 }
+
 
 extension UIApplication {
     /// The window the user is looking at.

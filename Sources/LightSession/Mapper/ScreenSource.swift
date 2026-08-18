@@ -439,6 +439,39 @@ public enum ModalShape: Equatable, Sendable {
     case other
 }
 
+/// What the app declared about a presentation, which is all there is to tell two of them apart.
+///
+/// Read rather than assumed: two different SwiftUI `.sheet`s on one screen arrive as the same class
+/// with the same `modalPresentationStyle`, so neither identifies which sheet this is. The detents and
+/// the rest of the sheet's configuration do, and — being declared rather than derived from content —
+/// they are the same on the first frame as on the last, and the same on every launch.
+public struct ModalPresentation: Equatable, Sendable {
+    /// `UIModalPresentationStyle.rawValue`.
+    public let styleRaw: Int
+    /// `UISheetPresentationController.Detent.Identifier` raw values, in the order the app gave them.
+    public let detentIdentifiers: [String]
+    public let prefersGrabberVisible: Bool
+    /// Points, or `nil` when the app left it to the system.
+    public let cornerRadius: Double?
+
+    public init(
+        styleRaw: Int,
+        detentIdentifiers: [String] = [],
+        prefersGrabberVisible: Bool = false,
+        cornerRadius: Double? = nil
+    ) {
+        self.styleRaw = styleRaw
+        self.detentIdentifiers = detentIdentifiers
+        self.prefersGrabberVisible = prefersGrabberVisible
+        self.cornerRadius = cornerRadius
+    }
+
+    /// A card over the screen, or something else. `.pageSheet` is 1 and `.formSheet` is 2.
+    public var shape: ModalShape {
+        styleRaw == 1 || styleRaw == 2 ? .sheet : .other
+    }
+}
+
 /// What to call a modal layer that appeared while the app names its own screens, or `nil` when this
 /// controller is not one.
 ///
@@ -490,14 +523,16 @@ public enum ModalShape: Equatable, Sendable {
 /// ## The name
 ///
 /// An `accessibilityIdentifier` if the app set one — the developer naming the thing, fixed by
-/// definition. Otherwise a word for the shape, never anything the modal *says*: a sheet titled with
-/// a record's name would mint a node per record, which is the trap `alertName` exists to avoid.
+/// definition. Otherwise a hash of the presentation's declared configuration, never anything the
+/// modal *says*: a sheet titled with a record's name would mint a node per record, which is the trap
+/// `alertName` exists to avoid. See `ScreenIdentity.modalName` for why a word for the shape was not
+/// enough — two un-named sheets on one screen shared it, and one silently replaced the other.
 public func modalLayerName(
     className: String,
     isPresentedItself: Bool,
     isInScreenWindow: Bool,
     isAlreadyNamedByApp: Bool,
-    shape: ModalShape,
+    presentation: ModalPresentation,
     identifier: String?
 ) -> String? {
     // Both guards come before the bridge's own host, and for the same reason: they are about whether
@@ -507,9 +542,15 @@ public func modalLayerName(
     // React Native's bridge presents its own host; it is a modal whatever the presentation says.
     if className.hasSuffix("ModalHostViewController") { return "Modal" }
     guard isPresentedItself else { return nil }
-    if let declared = ScreenIdentity.subScreenLabel(identifier) { return declared }
-    switch shape {
-    case .sheet: return "Sheet"
-    case .other: return "Modal"
-    }
+    // Named by what the app declared about the presentation, not by a word for its shape — see
+    // `ScreenIdentity.modalName`. A single word carried nothing about *which* presentation it was, so
+    // two un-named sheets on one screen became one node.
+    return ScreenIdentity.modalName(
+        identifier: identifier,
+        isSheet: presentation.shape == .sheet,
+        styleRaw: presentation.styleRaw,
+        detentIdentifiers: presentation.detentIdentifiers,
+        prefersGrabberVisible: presentation.prefersGrabberVisible,
+        cornerRadius: presentation.cornerRadius
+    )
 }

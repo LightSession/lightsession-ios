@@ -25,7 +25,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: false,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             ),
             "a push inside a presented stack reports a presenter and presented nothing itself"
@@ -39,7 +39,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: false,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             ),
             "the keyboard's own controllers are nested in somebody else's presentation"
@@ -53,7 +53,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: false,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             )
         )
@@ -68,7 +68,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: false,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .sheet,
+                presentation: ModalPresentation(styleRaw: 1),
                 identifier: nil
             ),
             "the shape says sheet because it inherits the presentation, not because it is one"
@@ -90,7 +90,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: false,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             ),
             "a presentation in the keyboard's window is over that window, not over this screen"
@@ -105,7 +105,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: false,
                 isInScreenWindow: false,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             )
         )
@@ -125,7 +125,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: true,
-                shape: .sheet,
+                presentation: ModalPresentation(styleRaw: 1),
                 identifier: nil
             ),
             "the app named this sheet from inside it; naming it again for its shape stacks one thing twice"
@@ -141,10 +141,13 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .sheet,
+                presentation: ModalPresentation(styleRaw: 1),
                 identifier: nil
             ),
-            "Sheet"
+            ScreenIdentity.modalName(
+                identifier: nil, isSheet: true, styleRaw: 1,
+                detentIdentifiers: [], prefersGrabberVisible: false, cornerRadius: nil
+            )
         )
     }
 
@@ -157,10 +160,13 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .sheet,
+                presentation: ModalPresentation(styleRaw: 1),
                 identifier: nil
             ),
-            "Sheet"
+            ScreenIdentity.modalName(
+                identifier: nil, isSheet: true, styleRaw: 1,
+                detentIdentifiers: [], prefersGrabberVisible: false, cornerRadius: nil
+            )
         )
     }
 
@@ -171,10 +177,13 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             ),
-            "Modal"
+            ScreenIdentity.modalName(
+                identifier: nil, isSheet: false, styleRaw: 0,
+                detentIdentifiers: [], prefersGrabberVisible: false, cornerRadius: nil
+            )
         )
     }
 
@@ -187,7 +196,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: false,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .other,
+                presentation: ModalPresentation(styleRaw: 0),
                 identifier: nil
             ),
             "Modal",
@@ -204,7 +213,7 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .sheet,
+                presentation: ModalPresentation(styleRaw: 1),
                 identifier: "Filtros"
             ),
             "Filtros",
@@ -222,11 +231,14 @@ final class ModalLayerNameTests: XCTestCase {
                 isPresentedItself: true,
                 isInScreenWindow: true,
                 isAlreadyNamedByApp: false,
-                shape: .sheet,
+                presentation: ModalPresentation(styleRaw: 1),
                 identifier: fromARecord
             ),
-            "Sheet",
-            "an identifier too long to be a label falls back to the shape rather than becoming a node"
+            ScreenIdentity.modalName(
+                identifier: nil, isSheet: true, styleRaw: 1,
+                detentIdentifiers: [], prefersGrabberVisible: false, cornerRadius: nil
+            ),
+            "an identifier too long to be a label falls back to structure rather than becoming a node"
         )
     }
 }

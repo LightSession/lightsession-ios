@@ -114,6 +114,12 @@ final class HubViewController: UIViewController {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: HostNamedSheetScreens())
             }),
+            // Two different sheets on one screen, neither named — the collision that puts both
+            // under a single node.
+            Route("twosheets", "Two un-named sheets on one screen", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: TwoSheetsScreens())
+            }),
             // A screen that settles on a loading placeholder and fills in later — the shape a
             // stored capture froze in, in production.
             Route("lateload", "Placeholder first, real rows later", {

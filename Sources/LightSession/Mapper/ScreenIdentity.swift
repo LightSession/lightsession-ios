@@ -131,6 +131,66 @@ public enum ScreenIdentity {
         return folded(leaf) == folded(part)
     }
 
+    /// A name for a modal layer the app did not name, that stays the same every time that modal
+    /// opens — and differs when it is a different modal.
+    ///
+    /// The same problem `alertName` solves, arriving later and from the other direction. Until this
+    /// existed the fallback was a single word for the shape, `Sheet` or `Modal`, which carried nothing
+    /// about *which* presentation it was: two different un-named sheets on one screen composed to the
+    /// same name and the same capture id, so one silently replaced the other — or, when the cache bar
+    /// judged the first richer, the second was discarded and never appeared at all. One node standing
+    /// in for two screens, with nothing anywhere saying so.
+    ///
+    /// Measured before choosing what to read: two different SwiftUI `.sheet`s on one screen arrive as
+    /// the *same class* (`PresentationHostingController<AnyView>` — the content type is erased) with
+    /// the *same* `modalPresentationStyle`. Neither can tell them apart. What did differ is what the
+    /// app declared about the presentation: its detents.
+    ///
+    /// So what is read, in order:
+    ///
+    ///  * an `accessibilityIdentifier` the app set — the developer naming the thing, and still the way
+    ///    out of every collision below;
+    ///  * the presentation's **declared configuration**: style, detent identifiers in order, grabber,
+    ///    corner radius. Declared by the app rather than derived from what is on screen, so it is the
+    ///    same on the first frame and the last, and the same on every launch.
+    ///
+    /// Content is not read here, for the reason `alertName` gives at length: a name taken from what a
+    /// modal displays turns one part into one node per record.
+    ///
+    /// Two sheets configured identically still collide, and that is the same "right way to be wrong"
+    /// `alertName` settles for — with one difference worth stating. `alertName` could argue a
+    /// collision is visible; this one was not, because *every* sheet collided, so nothing stood out.
+    /// Distinct configurations now separate, which is what makes the remaining collisions the narrow
+    /// case rather than the whole behaviour.
+    public static func modalName(
+        identifier: String?,
+        isSheet: Bool,
+        styleRaw: Int,
+        detentIdentifiers: [String],
+        prefersGrabberVisible: Bool,
+        cornerRadius: Double?
+    ) -> String {
+        if let named = subScreenLabel(identifier) { return named }
+        var hash: Int64 = 17
+        func mix(_ value: Int) { hash = hash &* 31 &+ Int64(value) }
+        // Byte by byte, never `hashValue`: Swift seeds string hashing per process, so a name built
+        // from it would differ between launches and mint a node per run — the opposite of a stable
+        // identity.
+        func mix(text: String) {
+            for byte in text.utf8 { mix(Int(byte)) }
+            mix(0)
+        }
+        mix(styleRaw)
+        mix(detentIdentifiers.count)
+        for identifier in detentIdentifiers { mix(text: identifier) }
+        mix(prefersGrabberVisible ? 1 : 0)
+        // Rounded, because a radius is a layout value and a fraction of a point is not a different
+        // sheet.
+        mix(cornerRadius.map { Int($0.rounded()) } ?? -1)
+        let prefix = isSheet ? "sheet" : "modal"
+        return prefix + "-" + String(format: "%06x", hash & 0xFFFFFF)
+    }
+
     /// A name for an alert that stays the same every time that alert opens.
     ///
     /// The trap is the obvious answer, and it is the one the Android SDK documented before this: the
