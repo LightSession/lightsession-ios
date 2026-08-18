@@ -1260,7 +1260,21 @@ final class ScreenTracker {
                     // the two apart — see `retainsMostOf`. The watch stops rather than rescanning:
                     // whatever is on the glass now belongs to a screen this capture is not of, and
                     // the report that follows will start a watch that fits it.
-                    if !SkeletonBuilder.retainsMostOf(baseline, in: fresh) {
+                    //
+                    // Asked only of a sub-screen, and that limit is the whole of what makes the rule
+                    // safe. Only a composite name can be *revealed past*: the modal leaves and the
+                    // parent underneath is a different screen wearing this capture's name. A bare
+                    // screen has nothing over it to leave, so growth there is the screen finishing —
+                    // which is the case the watch exists for, and the case this rule broke.
+                    //
+                    // Measured: a list that settles on five placeholder cards and fills in with
+                    // dozens of real rows shares almost nothing by position or kind, so the rule read
+                    // the arrival as a change of screen and froze the capture on the placeholder. It
+                    // survived every local run because a mocked network answers before the
+                    // placeholder can settle; production latency is what exposed it.
+                    if !SkeletonBuilder.acceptsLateContent(
+                        screen: screen, baseline: baseline, fresh: fresh
+                    ) {
                         LightSessionLog.debug(
                             "\(screen) changed into a different screen "
                                 + "(\(baseline.nodes.count) -> \(fresh.nodes.count) rect(s), "

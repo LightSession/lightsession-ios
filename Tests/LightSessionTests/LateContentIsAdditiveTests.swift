@@ -73,4 +73,51 @@ final class LateContentIsAdditiveTests: XCTestCase {
         ])
         XCTAssertTrue(SkeletonBuilder.retainsMostOf(baseline, in: recoloured))
     }
+
+    // MARK: - Which screens the rule is asked of
+
+    /// The bug the rule itself caused. A list settles on five placeholder cards, then fills in with
+    /// dozens of real rows that share nothing with them by position or kind. Asked of every screen,
+    /// `retainsMostOf` read that as a change of screen and froze the capture on the placeholder — in
+    /// production, where the wait is long enough for a placeholder to settle in the first place.
+    func testABareScreenMayReplaceItsPlaceholderWithSomethingUnrelated() {
+        let placeholders = frame((0..<5).map { node(120 + $0 * 110, .unknown) })
+        let loaded = frame((0..<40).map { node(60 + $0 * 61) })
+        XCTAssertFalse(
+            SkeletonBuilder.retainsMostOf(placeholders, in: loaded),
+            "these two really do share nothing; the rule is right about that and wrong to be asked"
+        )
+        XCTAssertTrue(
+            SkeletonBuilder.acceptsLateContent(screen: "dispatches", baseline: placeholders, fresh: loaded),
+            "a bare screen has nothing over it to leave, so growth is the screen finishing"
+        )
+    }
+
+    /// And the limit must not swallow the case the rule was written for: the same unrelated growth,
+    /// under a composite name, is still a modal leaving.
+    func testASubScreenStillRefusesTheScreenBehindIt() {
+        let sheet = frame((0..<12).map { node(200 + $0 * 70) })
+        let listBehind = frame((0..<40).map { node(60 + $0 * 61, .card) })
+        XCTAssertFalse(
+            SkeletonBuilder.acceptsLateContent(
+                screen: "dispatches \(ScreenIdentity.subScreenSeparator) Trocar empresa",
+                baseline: sheet,
+                fresh: listBehind
+            ),
+            "a composite name can be revealed past, and this is what that looks like"
+        )
+    }
+
+    /// A sub-screen loading its own content late is the reason this is a share and not a ban.
+    func testASubScreenMayStillFillInItsOwnContent() {
+        let empty = frame([node(200), node(300), node(400)])
+        let filled = frame([node(200), node(300), node(400), node(500), node(600), node(700)])
+        XCTAssertTrue(
+            SkeletonBuilder.acceptsLateContent(
+                screen: "dispatch/detail \(ScreenIdentity.subScreenSeparator) Sheet",
+                baseline: empty,
+                fresh: filled
+            )
+        )
+    }
 }
