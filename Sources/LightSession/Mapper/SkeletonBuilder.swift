@@ -159,6 +159,32 @@ public enum SkeletonBuilder {
         }
     }
 
+    /// Whether a late-content recapture may replace the capture already stored under `screen`.
+    ///
+    /// Two events grow the rectangle count and nothing else separates them by number:
+    ///
+    ///  * a screen finishing what it was loading — the case the watch exists for;
+    ///  * a modal leaving, revealing a busier screen behind it — the case that overwrote a correct
+    ///    capture of a sheet with a picture of the list underneath.
+    ///
+    /// Only a **composite** name can be revealed past. `parent › part` means something is over the
+    /// parent; when it goes, what is left is the parent, a different screen wearing this capture's
+    /// name. A bare screen has nothing over it to leave, so growth there is the screen finishing.
+    ///
+    /// Getting that limit wrong cost the second half of one bug and the whole of another. Asking
+    /// `retainsMostOf` of every screen froze a list on the five placeholder cards it had settled on,
+    /// because placeholders and loaded rows share nothing by position — the rule read a screen
+    /// finishing as a screen changing. Not asking it at all let the sheet case through. The name is
+    /// what tells the two apart, and it is known without any timing.
+    public static func acceptsLateContent(
+        screen: String,
+        baseline: SkeletonFrame,
+        fresh: SkeletonFrame
+    ) -> Bool {
+        guard screen.contains(ScreenIdentity.subScreenSeparator) else { return true }
+        return retainsMostOf(baseline, in: fresh)
+    }
+
     /// Whether `fresh` is still a picture of the same screen `baseline` was — the test the
     /// late-content watch applies before it replaces one capture with another.
     ///

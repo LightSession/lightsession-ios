@@ -114,6 +114,12 @@ final class HubViewController: UIViewController {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
                 return UIHostingController(rootView: HostNamedSheetScreens())
             }),
+            // A screen that settles on a loading placeholder and fills in later — the shape a
+            // stored capture froze in, in production.
+            Route("lateload", "Placeholder first, real rows later", {
+                guard #available(iOS 16.0, *) else { return UIViewController() }
+                return UIHostingController(rootView: LateLoadingScreens())
+            }),
             // The shortest screen an app has: a splash that decides and leaves.
             Route("splash", "A splash that leaves in milliseconds", {
                 guard #available(iOS 16.0, *) else { return UIViewController() }
