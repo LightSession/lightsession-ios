@@ -202,6 +202,18 @@ public enum LightSession {
             }
         }
 
+        // Network capture. Installed whatever the flag says, with the flag passed in, so there is
+        // one code path rather than one for armed and one for not — and so the seam is in place for
+        // an app that calls `recordRequest` before deciding, which then does nothing instead of
+        // nothing-but-differently. Weak, so this never keeps a recorder alive.
+        NetworkCapture.install(recorder: interactions, enabled: config.captureNetwork)
+        if config.captureNetwork {
+            LightSessionLog.info(
+                "network capture armed; add LightSessionURLSessionDelegate to a URLSession "
+                    + "or call LightSession.recordRequest — nothing is captured until you do"
+            )
+        }
+
         // The tracker hands over the window it captured, rather than each recorder finding one for itself:
         // two answers to "which window" is how a heatmap ends up plotted over a capture of something else.
         tracker.onWindow = { window in

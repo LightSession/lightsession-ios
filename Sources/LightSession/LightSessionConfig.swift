@@ -106,6 +106,22 @@ public struct LightSessionConfig: Sendable {
     /// this platform — and what it deliberately does not — is stated on `ErrorCapture`.
     public var captureErrors: Bool
 
+    /// Capture the HTTP requests the app makes — method, host, collapsed path, status, duration and
+    /// byte counts, attributed to the screen that was waiting.
+    ///
+    /// **Off by default, and the only flag here that is.** Everything else in this file describes
+    /// what the SDK does to itself; this one puts our code in the path of the app's own traffic.
+    /// The failure mode of being wrong about a wireframe is a bad picture. The failure mode of being
+    /// wrong here is the customer's app, so nobody gets it without asking.
+    ///
+    /// Opt-in twice, in fact: turning this on arms the recording, but nothing is captured until the
+    /// app also hands its `URLSession` a `LightSessionURLSessionDelegate` or calls
+    /// `LightSession.recordRequest`. There is no global hook — `URLProtocol` would mean re-issuing
+    /// every request the app makes through our code, and no measurement is worth that.
+    ///
+    /// Bodies and headers are never captured, on any setting. There is no field for them.
+    public var captureNetwork: Bool
+
     public init(
         apiKey: String,
         apiURL: String,
@@ -124,7 +140,8 @@ public struct LightSessionConfig: Sendable {
         sessionTimeoutMillis: Int64 = SessionIdentity.defaultIdleTimeoutMillis,
         // Appended last, as this list demands: reordering defaulted parameters breaks positional
         // callers silently.
-        captureErrors: Bool = true
+        captureErrors: Bool = true,
+        captureNetwork: Bool = false
     ) {
         self.apiKey = apiKey
         self.apiURL = apiURL
@@ -142,6 +159,7 @@ public struct LightSessionConfig: Sendable {
         self.interactionCaptureIntervalMillis = interactionCaptureIntervalMillis
         self.sessionTimeoutMillis = sessionTimeoutMillis
         self.captureErrors = captureErrors
+        self.captureNetwork = captureNetwork
     }
 }
 

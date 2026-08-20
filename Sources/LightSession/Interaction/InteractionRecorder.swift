@@ -179,6 +179,49 @@ final class InteractionRecorder {
         flush()
     }
 
+    /// Records one HTTP request the app made.
+    ///
+    /// No flush, unlike an error. An error is the crumb someone goes looking for; a request is one
+    /// of hundreds, and flushing per request would turn a chatty screen into a batch per call —
+    /// which is our own SDK becoming the network problem it exists to measure. These ride the
+    /// ordinary cadence.
+    ///
+    /// Hops to the main thread, always `async` and never `sync`: this is called from a URLSession
+    /// delegate queue, and a queue that blocks on main while main waits on the session is a
+    /// deadlock in the customer's app.
+    ///
+    /// The screen is read after the hop, so a request that lands during a navigation is attributed
+    /// to where the app arrived rather than where it waited. The window is a few milliseconds, the
+    /// Android capture makes the same trade, and the alternative is reading main-thread state from
+    /// another thread.
+    func record(call: ApiCall, timestampMillis: Int64) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.record(call: call, timestampMillis: timestampMillis) }
+            return
+        }
+        guard Recording.shared.isEnabled else { return }
+        session.markActive()
+        let screen = currentScreen()
+        sequence += 1
+        batcher.add(
+            ApiCallEvent(
+                sequence: sequence,
+                call: call,
+                timestampMillis: timestampMillis,
+                userId: session.userId,
+                userType: session.userType,
+                appVersion: appVersion,
+                screen: screen?.name,
+                screenId: screen?.captureId
+            ),
+            // The batching clock, not the request's. `timestampMillis` is when the request
+            // *started*, which for a slow call is a while ago — feeding that to the batcher would
+            // set the buffer's age to the request's duration and flush a nearly empty batch on the
+            // next tick. The crumb keeps the real start time; the buffer keeps real time.
+            nowMillis: Self.nowMillis()
+        )
+    }
+
     /// Records a crash, synchronously, on whatever thread is dying.
     ///
     /// Nothing here touches the batcher or the timers — they are main-thread state and this thread

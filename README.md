@@ -52,6 +52,64 @@ An app that mixes the two — UIKit screens with SwiftUI inside some of them —
 the flag off and name the SwiftUI screens; the SDK works out that a hosting controller whose contents the
 app has named is a container rather than a screen.
 
+### Recording the network the app made
+
+Off by default, and the only setting here that is. Everything else describes what the SDK does to
+itself; this one puts our code near the app's own traffic, so nobody gets it without asking twice —
+once for the flag, once for the client.
+
+```swift
+LightSession.start(.init(apiKey: "…", apiURL: "…", captureNetwork: true))
+
+// and on the app's own client — this is the whole integration:
+let session = URLSession(
+    configuration: .default,
+    delegate: LightSessionURLSessionDelegate(),
+    delegateQueue: nil
+)
+```
+
+`data(for:)` and the other async calls keep working; a session with a delegate is often assumed to be
+the old completion-handler world and is not.
+
+An app whose session already has a delegate keeps it and adds one line:
+
+```swift
+func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didFinishCollecting metrics: URLSessionTaskMetrics
+) {
+    LightSession.record(task, metrics: metrics)
+}
+```
+
+Anything that is not `URLSession` — Alamofire's `EventMonitor`, a hand-written client — calls the
+primitive the other two are built on:
+
+```swift
+LightSession.recordRequest(
+    method: "POST", url: url, statusCode: 201, durationMillis: 118,
+    requestBytes: 348, responseBytes: 1204, error: nil
+)
+```
+
+**There is no global hook, deliberately.** `URLProtocol` is the obvious way to capture everything with
+no integration at all, and what it actually does is re-issue every request the app makes through our
+code. Swizzling means being right about a private implementation on every future OS. Neither is worth
+a chart, so the customer's own client is where this attaches — visible, removable, theirs.
+
+**What is captured:** method, host, the path with its dynamic segments collapsed, status, duration,
+request and response body sizes, a one-word failure class, and the screen that was waiting.
+
+**What is never captured, on any setting:** request bodies, response bodies, headers, and the query
+string. Not redacted — there is no field to hold them, so no later edit adds one by loosening a
+filter. Collapsing happens *on the device*: `/v1/orders/{id}/items` is what leaves, never
+`/v1/orders/84321/items`, because a token that reaches a server has already left the building.
+
+Recording follows `stopRecording()`, and calls are batched with everything else rather than flushed
+one at a time — a chatty screen would otherwise make the SDK the network problem it exists to measure.
+
 ## What was measured
 
 A UIKit app with five shapes in it, driven end to end on an iPhone 17 simulator against a local backend:
@@ -180,7 +238,8 @@ nothing either way.
 
 - `Sources/LightSession/` — `LightSession.swift` is the whole public API; `Mapper/` holds the tracker, the
   settle detector, the wireframe builder and the pure decisions; `Network/` holds the payloads and the
-  one `URLSession` that sends them.
+  one `URLSession` that sends them; `ApiCalls/` holds the capture of the *app's* traffic, which is a
+  different subject from ours and is why it is a different directory.
 - `Tests/LightSessionTests/` — the pure decisions, walked exhaustively where the space is small enough to
   walk.
 - `Example/` — a UIKit app with SwiftUI inside it, built into a simulator `.app` by `build.sh` without an
