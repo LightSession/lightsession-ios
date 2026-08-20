@@ -138,6 +138,12 @@ final class HubViewController: UIViewController {
             }),
         ]),
 
+        ("The app's own network", [
+            // Real sockets against the local API, one case per launch argument. The only route here
+            // that is not about what a screen looks like.
+            Route("network", "HTTP requests, captured", { NetworkPlaygroundViewController() }),
+        ]),
+
         ("SwiftUI, naming itself or not at all", [
             // Titles only, no annotations: what the SDK reads from an app that changed nothing.
             Route("titled", "A stack with titles and no annotations", {

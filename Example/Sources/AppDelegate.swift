@@ -25,7 +25,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 screensReportedByHost: UserDefaults.standard.bool(forKey: "demoHostNamesScreens"),
                 // 300 ms instead of the default second: a smoother replay, and the frame budget it costs
                 // is the point of measuring it rather than guessing.
-                captureIntervalMillis: 300
+                captureIntervalMillis: 300,
+                // On here, off in every real app until someone asks for it. Safe to leave on in the
+                // sample precisely because arming it captures nothing on its own: the `network`
+                // route is the only screen that hands a `URLSession` our delegate, so every other
+                // route behaves as if this line were absent.
+                captureNetwork: true
             ),
             verbose: true
         )
