@@ -299,19 +299,27 @@ final class InteractionRecorder {
         // a run was read as proof that a tap had been captured when the batch held one navigation and no
         // touch at all.
         let taps = events.filter { $0 is InteractionEvent }.count
-        let moves = events.count - taps
+        let moves = events.filter { $0 is NavigationEvent }.count
+        let errors = events.filter { $0 is ErrorEvent }.count
+        let calls = events.filter { $0 is ApiCallEvent }.count
+        // Everything named, and the remainder named too. `moves` used to be "everything that is not
+        // a tap", which is how this line came to report an API call as a screen change — the exact
+        // reading error the comment above was written about, repeated by a subtraction.
+        let other = events.count - taps - moves - errors - calls
+        let counted = "\(taps) touch(es), \(moves) screen change(s), \(errors) error(s), "
+            + "\(calls) api" + (other > 0 ? ", \(other) other" : "")
 
         // Written to disk, not uploaded. Recording is finished when the file exists, and the request becomes
         // the drain's problem — so a failed one is retried instead of lost, which is what it used to be.
         do {
             try spool.write(breadcrumbs: fields)
             LightSessionLog.debug(
-                "spooled batch \(batchNumber): \(taps) touch(es), \(moves) screen change(s)"
+                "spooled batch \(batchNumber): \(counted)"
             )
             drain.drain()
         } catch {
             LightSessionLog.error(
-                "could not spool \(taps) touch(es) and \(moves) screen change(s): "
+                "could not spool \(counted): "
                     + error.localizedDescription
             )
         }
