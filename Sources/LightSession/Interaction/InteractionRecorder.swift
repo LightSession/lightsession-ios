@@ -20,7 +20,9 @@ final class InteractionRecorder {
     /// have no cycle and this can be exercised with a stub.
     private let currentScreen: () -> (name: String, captureId: String?)?
 
-    private let session: SessionCoordinator
+    /// Not `private`, only so `ApiCallSink` can read the session id for the sampling decision.
+    /// Everything else in this file uses it as before.
+    let session: SessionCoordinator
     private let onTouch: () -> Void
     private var batcher: BreadcrumbBatcher
     private var sequence = 0

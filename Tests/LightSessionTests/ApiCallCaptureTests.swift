@@ -10,6 +10,9 @@ final class ApiCallCaptureTests: XCTestCase {
 
     /// A sink that records what it was handed and can be told to re-enter the capture.
     private final class Sink: ApiCallSink {
+        /// Fixed, because the sampling decision is derived from it and a test that wanted a
+        /// particular verdict would otherwise be at the mercy of a random id.
+        var samplingSessionId = "test-session"
         var calls: [(ApiCall, Int64)] = []
         var onRecord: (() -> Void)?
         private let lock = NSLock()
@@ -92,7 +95,9 @@ final class ApiCallCaptureTests: XCTestCase {
         XCTAssertEqual(data?["request_bytes"] as? Int64, 348)
         XCTAssertEqual(data?["response_bytes"] as? Int64, 1_204)
         XCTAssertEqual(data?["error"] as? String, "")
-        XCTAssertEqual(data?.count, 7, "a field was added or removed without the ingest agreeing")
+        // Always present, including the `1` that means nothing was sampled away.
+        XCTAssertEqual(data?["weight"] as? Int, 1)
+        XCTAssertEqual(data?.count, 8, "a field was added or removed without the ingest agreeing")
     }
 
     /// A crumb that cannot be serialised does not fail alone — it fails the batch it is in, taking
@@ -188,6 +193,81 @@ final class ApiCallCaptureTests: XCTestCase {
             statusCode: 200, durationMillis: 9_000, startedAt: started
         )
         XCTAssertEqual(sink.calls.first?.1, 1_700_000_000_000)
+    }
+
+    // MARK: - Sampling
+
+    /// The field is always sent, including the `1` that means "nothing was sampled away". An
+    /// omitted field would have the server guessing, and it already has to guess for every SDK
+    /// older than this one.
+    func testTheWeightIsAlwaysOnTheWire() {
+        // The field count lives with the rest of the contract, in
+        // `testTheCrumbIsTheContractTheIngestReads`. Here the question is only that a weight the
+        // caller never mentioned still reaches the wire as 1.
+        let data = event(aCall()).breadcrumb["data"] as? [String: Any]
+        XCTAssertEqual(data?["weight"] as? Int, 1)
+    }
+
+    /// A weight multiplies, so an absurd one lets a single row invent traffic. This is the only
+    /// direction the field can lie in, so it is clamped at construction rather than trusted.
+    func testAnAbsurdWeightIsClampedAtConstruction() {
+        for (given, expected) in [(-5, 0), (0, 0), (1, 1), (10, 10), (999_999, 10_000)] {
+            let call = ApiCall(
+                method: "GET", url: URL(string: "https://h.com/a"), status: 200,
+                durationMillis: 1, requestBytes: 0, responseBytes: 0, failure: "", weight: given
+            )
+            XCTAssertEqual(call.weight, expected, "weight \(given)")
+        }
+    }
+
+    /// At a rate the session loses, a success is not recorded at all and a failure is recorded
+    /// with weight 0 — stored so somebody can open it, counted in nothing.
+    func testAtAZeroRateOnlyFailuresAreRecordedAndTheyCountForNothing() {
+        NetworkCapture.install(recorder: sink, enabled: true, sampleRate: 0.0)
+
+        LightSession.recordRequest(
+            method: "GET", url: URL(string: "https://h.com/v1/ok"),
+            statusCode: 200, durationMillis: 5
+        )
+        XCTAssertEqual(sink.count, 0, "a success outside the sample is not recorded")
+
+        LightSession.recordRequest(
+            method: "GET", url: URL(string: "https://h.com/v1/bad"),
+            statusCode: 500, durationMillis: 5
+        )
+        LightSession.recordRequest(
+            method: "GET", url: URL(string: "https://h.com/v1/dead"),
+            statusCode: 0, durationMillis: 5, error: URLError(.cannotConnectToHost)
+        )
+        XCTAssertEqual(sink.count, 2, "both failures are recorded")
+        XCTAssertTrue(sink.calls.allSatisfy { $0.0.weight == 0 })
+    }
+
+    /// A request that never got a status is a failure and one of the ones most worth keeping. If
+    /// `0` were read as "not >= 400" the worst outcome would be the first thing sampling threw
+    /// away.
+    func testAStatuslessRequestCountsAsAFailureForSampling() {
+        NetworkCapture.install(recorder: sink, enabled: true, sampleRate: 0.0)
+        LightSession.recordRequest(
+            method: "GET", url: URL(string: "https://h.com/v1/dns"),
+            statusCode: 0, durationMillis: 30_000, error: URLError(.cannotFindHost)
+        )
+        XCTAssertEqual(sink.count, 1)
+        XCTAssertEqual(sink.calls.first?.0.failure, "dns")
+    }
+
+    /// With sampling off, everything is recorded standing for itself — the default, and the
+    /// behaviour an app that changes nothing keeps.
+    func testWithSamplingOffEverythingIsRecordedAtWeightOne() {
+        NetworkCapture.install(recorder: sink, enabled: true, sampleRate: 1.0)
+        for status in [200, 201, 404, 500, 0] {
+            LightSession.recordRequest(
+                method: "GET", url: URL(string: "https://h.com/v1/x"),
+                statusCode: status, durationMillis: 5
+            )
+        }
+        XCTAssertEqual(sink.count, 5)
+        XCTAssertTrue(sink.calls.allSatisfy { $0.0.weight == 1 })
     }
 
     // MARK: - The properties this feature is judged on

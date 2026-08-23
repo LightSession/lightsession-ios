@@ -206,7 +206,11 @@ public enum LightSession {
         // one code path rather than one for armed and one for not — and so the seam is in place for
         // an app that calls `recordRequest` before deciding, which then does nothing instead of
         // nothing-but-differently. Weak, so this never keeps a recorder alive.
-        NetworkCapture.install(recorder: interactions, enabled: config.captureNetwork)
+        NetworkCapture.install(
+            recorder: interactions,
+            enabled: config.captureNetwork,
+            sampleRate: config.networkSampleRate
+        )
         if config.captureNetwork {
             LightSessionLog.info(
                 "network capture armed; add LightSessionURLSessionDelegate to a URLSession "
