@@ -122,6 +122,25 @@ public struct LightSessionConfig: Sendable {
     /// Bodies and headers are never captured, on any setting. There is no field for them.
     public var captureNetwork: Bool
 
+    /// What fraction of sessions have their network recorded. `1.0` — everything — by default.
+    ///
+    /// The unit is the **session**, not the request, and that is the whole design. A coin per
+    /// request at a tenth turns a screen that fires six calls at once into one recorded call, and
+    /// a reader then concludes the screen makes one request: a lie about the app's structure that
+    /// no sample size repairs. It also punches holes in the session timeline, which is the one
+    /// view this product has that a server-side tool does not. So a session is recorded whole or
+    /// not at all, and sessions are drawn uniformly.
+    ///
+    /// **Failures are recorded regardless.** A rare failure at a tenth would otherwise be seen
+    /// once in ten occurrences, and the rare one is the one somebody phones about. Those extras
+    /// are sent marked as standing for no traffic, so they can be listed and watched without
+    /// moving any rate or percentile — see `NetworkSampling`.
+    ///
+    /// Default `1.0` on purpose. Sampling makes every number an estimate, and a default that
+    /// quietly estimated would have people quoting figures they did not know were approximate.
+    /// Turning it down is a decision about cost, and it belongs to whoever is paying.
+    public var networkSampleRate: Double
+
     public init(
         apiKey: String,
         apiURL: String,
@@ -141,7 +160,8 @@ public struct LightSessionConfig: Sendable {
         // Appended last, as this list demands: reordering defaulted parameters breaks positional
         // callers silently.
         captureErrors: Bool = true,
-        captureNetwork: Bool = false
+        captureNetwork: Bool = false,
+        networkSampleRate: Double = 1.0
     ) {
         self.apiKey = apiKey
         self.apiURL = apiURL
@@ -160,6 +180,7 @@ public struct LightSessionConfig: Sendable {
         self.sessionTimeoutMillis = sessionTimeoutMillis
         self.captureErrors = captureErrors
         self.captureNetwork = captureNetwork
+        self.networkSampleRate = networkSampleRate
     }
 }
 

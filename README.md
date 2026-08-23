@@ -107,6 +107,19 @@ string. Not redacted — there is no field to hold them, so no later edit adds o
 filter. Collapsing happens *on the device*: `/v1/orders/{id}/items` is what leaves, never
 `/v1/orders/84321/items`, because a token that reaches a server has already left the building.
 
+**Sampling** is `networkSampleRate`, and the unit is the session rather than the request:
+
+```swift
+LightSession.start(.init(apiKey: "…", apiURL: "…", captureNetwork: true, networkSampleRate: 0.1))
+```
+
+A coin per request at a tenth would turn a screen that fires six calls at once into one recorded
+call, and a reader would conclude the screen makes one request — a lie about the app's structure
+rather than about its volume. So a session is recorded whole or not at all. **Failures are recorded
+regardless**, marked as standing for no traffic, so a rare one can still be opened and watched
+without moving any rate or percentile. Default `1.0`: sampling makes every number an estimate, and
+the dashboard says so by showing the sample size beside the count.
+
 Recording follows `stopRecording()`, and calls are batched with everything else rather than flushed
 one at a time — a chatty screen would otherwise make the SDK the network problem it exists to measure.
 

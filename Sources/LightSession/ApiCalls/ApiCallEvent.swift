@@ -28,6 +28,10 @@ struct ApiCall {
     /// description on this platform interpolates the URL, so `error.localizedDescription` is a
     /// token leak wearing a diagnostic's clothes.
     let failure: String
+    /// How many real requests this row stands for. `1` normally; `N` when the device kept one
+    /// session in `N`; `0` for a failure kept from a session that was not sampled — stored so it
+    /// can be opened, counted in nothing. See `NetworkSampling`.
+    let weight: Int
 
     /// Builds the facts from a URL, collapsing the path and refusing anything that is not one.
     ///
@@ -40,7 +44,8 @@ struct ApiCall {
         durationMillis: Int64,
         requestBytes: Int64,
         responseBytes: Int64,
-        failure: String
+        failure: String,
+        weight: Int = 1
     ) {
         let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         self.method = Self.method(method)
@@ -51,6 +56,9 @@ struct ApiCall {
         self.requestBytes = max(0, requestBytes)
         self.responseBytes = max(0, responseBytes)
         self.failure = failure
+        // Clamped, because a weight multiplies: an absurd one lets a single stored row invent
+        // traffic that never happened, which is the one direction this field can lie in.
+        self.weight = min(max(0, weight), 10_000)
     }
 
     /// Uppercased, letters only. A method is a fixed vocabulary; anything else came from a caller
@@ -109,6 +117,10 @@ struct ApiCallEvent: Breadcrumb {
                 "request_bytes": call.requestBytes,
                 "response_bytes": call.responseBytes,
                 "error": call.failure,
+                // Always sent, including the `1` that means "no sampling". An omitted field would
+                // have the server guessing, and it already has to guess for every SDK older than
+                // this one.
+                "weight": call.weight,
             ] as [String: Any],
         ]
         // The names the ingest parser already reads off any crumb.

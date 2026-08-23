@@ -30,7 +30,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 // sample precisely because arming it captures nothing on its own: the `network`
                 // route is the only screen that hands a `URLSession` our delegate, so every other
                 // route behaves as if this line were absent.
-                captureNetwork: true
+                captureNetwork: true,
+                // `-demoNetworkSampleRate 0.1` from the launch arguments. Default 1.0, matching
+                // the SDK, so the sample behaves as an ordinary app unless asked otherwise.
+                networkSampleRate: UserDefaults.standard.object(forKey: "demoNetworkSampleRate")
+                    .map { _ in UserDefaults.standard.double(forKey: "demoNetworkSampleRate") }
+                    ?? 1.0
             ),
             verbose: true
         )
