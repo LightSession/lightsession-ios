@@ -91,3 +91,51 @@ final class NetworkFailureTests: XCTestCase {
         }
     }
 }
+
+/// The gate on a failure class that came from outside Swift.
+///
+/// One caller has no `Error` to read: a request issued in JavaScript crosses the bridge as a word.
+/// Trusting that word would let the closed vocabulary be widened from outside — and the server's
+/// column is `LowCardinality(String)` on the strength of it being closed.
+final class NetworkFailureValidationTests: XCTestCase {
+
+    func testAKnownWordSurvives() {
+        for word in NetworkFailure.vocabulary where !word.isEmpty {
+            XCTAssertEqual(NetworkFailure.validated(word), word)
+        }
+    }
+
+    func testEmptyMeansNoFailure() {
+        XCTAssertEqual(NetworkFailure.validated(""), "")
+        XCTAssertEqual(NetworkFailure.validated("   "), "")
+    }
+
+    /// Case and padding are the caller being loose, not the caller being wrong.
+    func testCaseAndPaddingAreForgiven() {
+        XCTAssertEqual(NetworkFailure.validated("TIMEOUT"), "timeout")
+        XCTAssertEqual(NetworkFailure.validated("  Dns  "), "dns")
+    }
+
+    /// Anything unrecognised becomes `io` — the honest reading of "it failed and we cannot say
+    /// how" — rather than being passed through into a column promised low cardinality.
+    func testAnythingElseCollapsesToIo() {
+        for raw in [
+            "ECONNREFUSED", "timed out", "Error: network request failed", "🙂",
+            String(repeating: "x", count: 500), "timeout;DROP TABLE events",
+        ] {
+            let word = NetworkFailure.validated(raw)
+            XCTAssertEqual(word, "io", "for \(raw)")
+        }
+    }
+
+    /// The property, stated as one: nothing this function returns is outside the set.
+    func testNoOutputEverLeavesTheVocabulary() {
+        let allowed = NetworkFailure.vocabulary.union([""])
+        for raw in ["", "dns", "nonsense", "OFFLINE", "  ", "cancelled ", "http_500"] {
+            XCTAssertTrue(
+                allowed.contains(NetworkFailure.validated(raw)),
+                "\(raw) produced something outside the vocabulary"
+            )
+        }
+    }
+}

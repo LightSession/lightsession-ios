@@ -179,6 +179,38 @@ extension LightSession {
         error: Error? = nil,
         startedAt: Date? = nil
     ) {
+        record(
+            method: method,
+            url: url,
+            statusCode: statusCode,
+            durationMillis: durationMillis,
+            requestBytes: requestBytes,
+            responseBytes: responseBytes,
+            failureClass: NetworkFailure.of(error),
+            startedAt: startedAt
+        )
+    }
+
+    /// The same recording, for a caller that already has the failure *class* rather than an
+    /// `Error` to read one off.
+    ///
+    /// That is every caller reached through Objective-C, and in practice the React Native bridge:
+    /// the request was issued in JavaScript, so there is no `Error` to inspect on this side — only
+    /// a word the JS layer decided on. Internal rather than public because a `String` failure is a
+    /// worse API than an `Error` for anyone who has an `Error`, and everyone in Swift does.
+    ///
+    /// One body for both entry points. Two would be two places for the sampling decision, the
+    /// empty-path refusal and the timestamp to drift apart.
+    static func record(
+        method: String,
+        url: URL?,
+        statusCode: Int,
+        durationMillis: Int64,
+        requestBytes: Int64,
+        responseBytes: Int64,
+        failureClass: String,
+        startedAt: Date? = nil
+    ) {
         guard NetworkCapture.isArmed else { return }
         // The sampling decision first, before any of the work it gates. `statusCode == 0` means
         // the request never got an answer, which is a failure and one of the ones most worth
@@ -192,7 +224,7 @@ extension LightSession {
             durationMillis: durationMillis,
             requestBytes: requestBytes,
             responseBytes: responseBytes,
-            failure: NetworkFailure.of(error),
+            failure: NetworkFailure.validated(failureClass),
             weight: weight
         )
         // A call whose URL had no usable path is dropped rather than stored as an endpoint called

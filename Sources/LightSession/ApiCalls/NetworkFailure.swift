@@ -11,6 +11,25 @@ import Foundation
 /// `tls`, `connect`, `connection_lost`, `cancelled`, `io`.
 enum NetworkFailure {
 
+    /// Every word this type may produce. The server's column is `LowCardinality(String)` on the
+    /// strength of this set being closed.
+    static let vocabulary: Set<String> = [
+        "timeout", "dns", "tls", "connect", "connection_lost", "cancelled", "offline", "io",
+    ]
+
+    /// A class a *caller* chose, checked against the vocabulary.
+    ///
+    /// Needed because one caller does not have an `Error` to read: a request issued in JavaScript
+    /// crosses the bridge as a word. Trusting that word would let the closed set be widened from
+    /// outside — a typo, or a client on a newer version than the server, and the column that was
+    /// promised low cardinality grows a value nobody planned. Anything unrecognised becomes `io`,
+    /// which is the honest reading of "it failed and we cannot say how".
+    static func validated(_ raw: String) -> String {
+        let word = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if word.isEmpty { return "" }
+        return vocabulary.contains(word) ? word : "io"
+    }
+
     /// The class for an error, or `""` when there was none.
     static func of(_ error: Error?) -> String {
         guard let error else { return "" }
