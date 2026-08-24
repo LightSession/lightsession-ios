@@ -55,9 +55,39 @@ public final class LightSessionBridge: NSObject {
             interactionCaptureIntervalMillis: config.millis(
                 "interactionCaptureIntervalMillis", defaults.interactionCaptureIntervalMillis
             ),
-            sessionTimeoutMillis: config.millis("sessionTimeoutMillis", defaults.sessionTimeoutMillis)
+            sessionTimeoutMillis: config.millis("sessionTimeoutMillis", defaults.sessionTimeoutMillis),
+            captureNetwork: config.bool("captureNetwork", defaults.captureNetwork),
+            networkSampleRate: config.rate("networkSampleRate", defaults.networkSampleRate)
         )
         LightSession.start(settings, verbose: verbose)
+    }
+
+    /// One HTTP request, from a caller that has only a URL string — which is every caller reached
+    /// through Objective-C, and in practice the React Native bridge.
+    ///
+    /// The numbers arrive as `Double` because that is what a JavaScript number is. Rounded rather
+    /// than truncated, so 118.7 ms is not reported as 118.
+    @objc public static func recordRequest(
+        method: String,
+        url: String,
+        statusCode: Int,
+        durationMillis: Double,
+        requestBytes: Double,
+        responseBytes: Double,
+        error: String
+    ) {
+        LightSession.record(
+            method: method,
+            url: URL(string: url),
+            statusCode: statusCode,
+            durationMillis: Int64(durationMillis.rounded()),
+            requestBytes: Int64(requestBytes.rounded()),
+            responseBytes: Int64(responseBytes.rounded()),
+            // A class the caller already decided on, not an `Error` to be inspected. Passed through
+            // `NetworkFailure` so an unknown word cannot widen the closed vocabulary the server's
+            // `LowCardinality` column is promised.
+            failureClass: error
+        )
     }
 
     @objc public static func setScreen(_ name: String) { LightSession.setScreen(name) }
@@ -104,6 +134,12 @@ private extension [String: Any] {
     func millis(_ key: String, _ fallback: Int64) -> Int64 {
         guard let number = self[key] as? NSNumber else { return fallback }
         return Int64(number.doubleValue)
+    }
+
+    /// A sampling rate, which is a fraction rather than a count and so cannot go through `millis`.
+    func rate(_ key: String, _ fallback: Double) -> Double {
+        guard let number = self[key] as? NSNumber else { return fallback }
+        return number.doubleValue
     }
 }
 #endif
