@@ -4,3 +4,8 @@ Example/.build/
 *.xcuserstate
 DerivedData/
 .DS_Store
+
+# Estado por usuario do Xcode: breakpoints, esquemas, ultima aba aberta. Nada disso e do projeto,
+# e num repositorio publico e o caminho de dizer a estranhos como voce trabalha.
+xcuserdata/
+*.xcuserstate

@@ -340,7 +340,7 @@ final class RouteScreenNameTests: XCTestCase {
 /// Where a class's code has to live to count as the app's.
 final class AppOwnershipPathTests: XCTestCase {
 
-    private let app = "/Devices/1/Bundle/Application/ABC/PharmManager.app"
+    private let app = "/Devices/1/Bundle/Application/ABC/Example.app"
 
     func testTheAppItselfIsTheApp() {
         XCTAssertTrue(isPathInsideApp(app, appPath: app))
