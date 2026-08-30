@@ -1,0 +1,67 @@
+# O que uma tag dispara: valida, testa, cria o Release e publica o pod.
+#
+# As tags do iOS nao levam `v` — as existentes vao de `0.2.0` a `0.2.5`, e o Swift Package Manager
+# resolve exatamente esse formato. Mudar agora quebraria todo consumidor que ja pinou uma versao.
+name: release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 40
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A guarda que o iOS mais precisava. O podspec resolve a fonte por `:tag => s.version`, entao
+      # um numero desatualizado nele nao falha em lugar nenhum — entrega o codigo de outra release,
+      # em silencio. Aconteceu: o podspec ficou em 0.1.0 enquanto as tags chegavam a 0.2.5, e so um
+      # consumidor de CocoaPods teria descoberto, recebendo um SDK cinco releases atras.
+      - name: A tag e a versao do podspec concordam
+        run: |
+          POD=$(grep -oE "s\.version *= *'[0-9]+\.[0-9]+\.[0-9]+'" LightSession.podspec \
+                  | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
+          echo "tag=$GITHUB_REF_NAME podspec=$POD"
+          if [ "$GITHUB_REF_NAME" != "$POD" ]; then
+            echo "::error::a tag diz $GITHUB_REF_NAME e o podspec declara $POD" && exit 1
+          fi
+
+      - name: Testes
+        run: |
+          xcodebuild test -scheme LightSession \
+            -destination 'platform=iOS Simulator,name=iPhone 16'
+
+      - name: Criar o Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+
+      # Condicional de proposito, e nao por cautela: o `pod trunk push` roda um lint que **clona o
+      # repositorio** a partir do `s.source`. Enquanto ele for privado, esse clone falha e o passo
+      # quebraria toda release por um motivo que nao tem a ver com o codigo.
+      #
+      # Sem o segredo configurado, o passo e pulado e o resto da release acontece. No dia em que o
+      # repositorio abrir, basta adicionar COCOAPODS_TRUNK_TOKEN e ele passa a rodar.
+      - name: Publicar no CocoaPods trunk
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: |
+          # Testado no shell e nao num `if:` do workflow: a disponibilidade do contexto `secrets`
+          # em condicionais varia por onde ela aparece, e uma condicao que silenciosamente avalia
+          # como falsa pularia a publicacao de toda release sem dizer nada.
+          if [ -z "$COCOAPODS_TRUNK_TOKEN" ]; then
+            echo "COCOAPODS_TRUNK_TOKEN ausente — pulando. O Release do GitHub foi criado."
+            exit 0
+          fi
+          pod trunk push LightSession.podspec --allow-warnings
