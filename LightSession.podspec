@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   # Igual a tag mais recente, e tem de continuar igual: `s.source` abaixo resolve a fonte por
   # `:tag => s.version`, entao um numero desatualizado aqui nao falha — entrega silenciosamente o
   # codigo de outra release. Estava em 0.1.0 com as tags em 0.2.x, ou seja cinco releases atras.
-  s.version          = '0.2.5'
+  s.version          = '0.3.0'
   s.summary          = 'Session recording and screen mapping for iOS.'
   s.description      = <<~DESC
     Maps an app's screens as wireframes and screenshots, records taps and swipes for a touch heatmap, and
