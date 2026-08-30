@@ -2,6 +2,24 @@
 
 Session recording for iOS, native Swift, no dependencies.
 
+| Package | Swift Package Manager | CocoaPods | Minimum iOS |
+| --- | --- | --- | --- |
+| `LightSession` | [![SPM](https://img.shields.io/github/v/tag/LightSession/lightsession-ios?style=for-the-badge&label=SPM&color=green)](https://github.com/LightSession/lightsession-ios/releases) | [![CocoaPods](https://img.shields.io/cocoapods/v/LightSession?style=for-the-badge&color=green)](https://cocoapods.org/pods/LightSession) | 15.0 |
+
+```swift
+// Swift Package Manager
+.package(url: "https://github.com/LightSession/lightsession-ios.git", from: "0.2.5")
+```
+
+```ruby
+# CocoaPods
+pod 'LightSession', '~> 0.2'
+```
+
+Unlike the Android SDK, whose artefact lives on Maven Central, both of these resolve by cloning
+**this repository** — so neither works while it is private. The version badge above reads from the
+tags, which is the same thing Swift Package Manager resolves against.
+
 Three things, in the order they were built:
 
 - **The screen map** — what an app's screens are and how people move between them. Each screen arrives as
