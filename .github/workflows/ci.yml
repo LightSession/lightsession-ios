@@ -1,0 +1,43 @@
+# Roda em todo push e todo PR. Existe porque um repositorio publico recebe PR de gente que voce
+# nao conhece, e sem isto a unica coisa que compilava o projeto era uma release — ou seja, o
+# primeiro sinal de que algo quebrou chegaria depois da tag.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nenhum segredo aqui, de proposito. Num repositorio publico um PR pode vir de um fork, e um
+# workflow que exponha segredo a codigo de terceiro entrega o segredo.
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Testes
+        run: |
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c "
+          import json, sys
+          for runtime, devs in json.load(sys.stdin)['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for dev in devs:
+                  if dev.get('isAvailable') and 'iPhone' in dev['name']:
+                      print(dev['name']); raise SystemExit
+          ")
+          [ -n "$DEVICE" ] || { echo "::error::nenhum simulador de iPhone no runner" && exit 1; }
+          echo "simulador: $DEVICE"
+          xcodebuild test -scheme LightSession -destination "platform=iOS Simulator,name=$DEVICE"
+
+      # O podspec e publicado a partir deste repositorio, entao um erro nele so apareceria na hora
+      # de publicar — que e tarde. `--quick` pula o build completo e valida a estrutura, que e onde
+      # os erros de metadados ficam.
+      - name: Validar o podspec
+        run: pod lib lint LightSession.podspec --allow-warnings --quick
