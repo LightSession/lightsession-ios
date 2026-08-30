@@ -37,10 +37,29 @@ jobs:
             echo "::error::a tag diz $GITHUB_REF_NAME e o podspec declara $POD" && exit 1
           fi
 
+      # O simulador e escolhido em tempo de execucao, e nao fixado pelo nome.
+      #
+      # Um nome fixo amarra a release a quais aparelhos o runner do GitHub instala com o Xcode do
+      # momento. Quando essa lista mudar — e ela muda a cada versao do Xcode — toda release passa
+      # a falhar por um nome de aparelho, sem ter nada a ver com o codigo, e no pior momento
+      # possivel: quando alguem acabou de cortar a tag.
       - name: Testes
         run: |
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c "
+          import json, sys
+          for runtime, devs in json.load(sys.stdin)['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for dev in devs:
+                  if dev.get('isAvailable') and 'iPhone' in dev['name']:
+                      print(dev['name']); raise SystemExit
+          ")
+          if [ -z "$DEVICE" ]; then
+            echo "::error::nenhum simulador de iPhone disponivel no runner" && exit 1
+          fi
+          echo "simulador: $DEVICE"
           xcodebuild test -scheme LightSession \
-            -destination 'platform=iOS Simulator,name=iPhone 16'
+            -destination "platform=iOS Simulator,name=$DEVICE"
 
       - name: Criar o Release
         env:
