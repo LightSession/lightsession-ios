@@ -141,21 +141,20 @@ jobs:
           V: ${{ needs.verificar.outputs.version }}
         run: gh release create "$V" --title "$V" --generate-notes --verify-tag
 
-      # Condicional de proposito, e nao por cautela: o `pod trunk push` roda um lint que **clona o
-      # repositorio** a partir do `s.source`. Enquanto ele for privado, esse clone falha e o passo
-      # quebraria toda release por um motivo que nao tem a ver com o codigo.
-      #
-      # Sem o segredo configurado, o passo e pulado e o resto da release acontece. No dia em que o
-      # repositorio abrir, basta adicionar COCOAPODS_TRUNK_TOKEN e ele passa a rodar.
+      # O segredo passou a ser obrigatorio. Enquanto este repositorio era privado o passo era
+      # pulado quando o token faltava, porque o lint do trunk clona o `s.source` e o clone de um
+      # repositorio privado falha — quebrar toda release por isso nao ajudava ninguem. O
+      # repositorio e publico e o token esta configurado, entao a ausencia dele agora e um erro de
+      # configuracao, e um erro de configuracao que passa em silencio deixaria a tag publicada e o
+      # pod para tras, com as duas fontes divergindo.
       - name: Publicar no CocoaPods trunk
         env:
           COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
         run: |
           # Testado no shell e nao num `if:` do workflow: a disponibilidade do contexto `secrets`
           # em condicionais varia por onde ela aparece, e uma condicao que silenciosamente avalia
-          # como falsa pularia a publicacao de toda release sem dizer nada.
+          # como falsa pularia a publicacao sem dizer nada.
           if [ -z "$COCOAPODS_TRUNK_TOKEN" ]; then
-            echo "COCOAPODS_TRUNK_TOKEN ausente — pulando. O Release do GitHub foi criado."
-            exit 0
+            echo "::error::COCOAPODS_TRUNK_TOKEN ausente no environment release" && exit 1
           fi
           pod trunk push LightSession.podspec --allow-warnings
