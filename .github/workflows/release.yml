@@ -1,48 +1,86 @@
-# O que uma tag dispara: valida, testa, cria o Release e publica o pod.
+# Publicar e um ato deliberado: este workflow so roda quando alguem abre Actions, clica em
+# "Run workflow" e escreve a versao. Nao ha gatilho por tag, de proposito — `git push --tags` leva
+# junto tudo o que estiver local, e aqui uma tag empurrada por engano ja e a release: o Swift
+# Package Manager resolve versao por tag, sem intermediario nenhum. No instante em que a tag chega
+# ao GitHub, qualquer consumidor com `from: "..."` pode receber aquele codigo.
 #
-# As tags do iOS nao levam `v` — as existentes vao de `0.2.0` a `0.2.5`, e o Swift Package Manager
-# resolve exatamente esse formato. Mudar agora quebraria todo consumidor que ja pinou uma versao.
+# As tags do iOS nao levam `v` — as existentes vao de `0.2.0` a `0.3.0`, e e esse o formato que o
+# SPM resolve. Mudar agora quebraria todo consumidor que ja pinou uma versao.
 name: release
 
 on:
-  push:
-    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versao a publicar, sem prefixo (ex.: 0.3.1). Tem que bater com o podspec.'
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  # As conferencias e os testes rodam antes e fora do job que publica, de proposito: assim nao
+  # dependem de aprovacao. Quem for aprovar ja ve o resultado na tela, em vez de precisar aprovar
+  # para descobrir que a versao estava errada.
+  verificar:
     runs-on: macos-15
     timeout-minutes: 40
-    permissions:
-      contents: write
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # A guarda que o iOS mais precisava. O podspec resolve a fonte por `:tag => s.version`, entao
-      # um numero desatualizado nele nao falha em lugar nenhum — entrega o codigo de outra release,
-      # em silencio. Aconteceu: o podspec ficou em 0.1.0 enquanto as tags chegavam a 0.2.5, e so um
-      # consumidor de CocoaPods teria descoberto, recebendo um SDK cinco releases atras.
-      - name: A tag e a versao do podspec concordam
+      # A primeira guarda e a que o iOS mais precisava. O podspec resolve a fonte por
+      # `:tag => s.version`, entao um numero desatualizado nele nao falha em lugar nenhum — entrega
+      # o codigo de outra release, em silencio. Aconteceu: o podspec ficou em 0.1.0 enquanto as tags
+      # chegavam a 0.2.5, e so um consumidor de CocoaPods teria descoberto, recebendo um SDK cinco
+      # releases atras.
+      #
+      # As outras duas cobrem o caso oposto: pedir uma versao que ja saiu. Uma tag existente nao
+      # pode ser movida sem quebrar quem ja resolveu por ela, e o trunk nao aceita reenviar a mesma
+      # versao de um pod.
+      - name: Conferir a versao
+        id: guard
         run: |
+          IN="${{ inputs.version }}"
           POD=$(grep -oE "s\.version *= *'[0-9]+\.[0-9]+\.[0-9]+'" LightSession.podspec \
                   | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
-          echo "tag=$GITHUB_REF_NAME podspec=$POD"
-          if [ "$GITHUB_REF_NAME" != "$POD" ]; then
-            echo "::error::a tag diz $GITHUB_REF_NAME e o podspec declara $POD" && exit 1
+          echo "pedido=$IN  podspec=$POD"
+
+          [ "$IN" = "$POD" ] || { echo "::error::voce pediu $IN e o podspec declara $POD" && exit 1; }
+
+          if git rev-parse -q --verify "refs/tags/$IN" >/dev/null; then
+            echo "::error::a tag $IN ja existe — esta versao ja foi publicada?" && exit 1
           fi
+
+          # O trunk expoe as versoes publicadas do pod. Se a versao pedida ja estiver la, o
+          # `pod trunk push` recusaria no fim, depois do lint inteiro.
+          if curl -sf "https://trunk.cocoapods.org/api/v1/pods/LightSession" \
+               | python3 -c "
+          import json, sys
+          alvo = '$IN'
+          pod = json.load(sys.stdin)
+          if alvo in [v['name'] for v in pod.get('versions', [])]:
+              raise SystemExit(1)
+          "; then
+            echo "a versao $IN ainda nao esta no trunk"
+          else
+            echo "::error::LightSession $IN ja esta publicado no CocoaPods trunk" && exit 1
+          fi
+
+          echo "version=$IN" >> "$GITHUB_OUTPUT"
 
       # O simulador e escolhido em tempo de execucao, e nao fixado pelo nome.
       #
       # Um nome fixo amarra a release a quais aparelhos o runner do GitHub instala com o Xcode do
       # momento. Quando essa lista mudar — e ela muda a cada versao do Xcode — toda release passa
       # a falhar por um nome de aparelho, sem ter nada a ver com o codigo, e no pior momento
-      # possivel: quando alguem acabou de cortar a tag.
+      # possivel: quando alguem acabou de pedir a release.
       - name: Testes
         run: |
           DEVICE=$(xcrun simctl list devices available --json | python3 -c "
@@ -61,10 +99,47 @@ jobs:
           xcodebuild test -scheme LightSession \
             -destination "platform=iOS Simulator,name=$DEVICE"
 
+  publicar:
+    needs: verificar
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    # A trava que importa. `release` e um Environment com required reviewers: o job para aqui e
+    # espera alguem clicar em "Review deployments" -> "Approve and deploy". Enquanto ninguem
+    # aprovar, nenhuma tag e criada e nada e enviado ao trunk.
+    #
+    # E o lugar certo para o COCOAPODS_TRUNK_TOKEN. Movido de "repository secrets" para
+    # "environment secrets" deste environment, ele deixa de ser legivel por qualquer job do
+    # repositorio e passa a existir so nesta etapa, depois da aprovacao.
+    environment: release
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Aqui a tag vem ANTES de publicar, ao contrario dos outros dois SDKs — e por um motivo
+      # concreto, nao por estilo. O `pod trunk push` roda um lint que clona o repositorio na tag
+      # declarada pelo podspec (`:tag => s.version`); sem a tag existindo no remoto, esse clone
+      # falha e o push nao acontece. E a mesma tag e, por si so, a release para o Swift Package
+      # Manager, que nao tem registry: e ela que o SPM resolve.
+      - name: Marcar a tag
+        env:
+          V: ${{ needs.verificar.outputs.version }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "$V" -m "$V"
+          git push origin "$V"
+
       - name: Criar o Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          V: ${{ needs.verificar.outputs.version }}
+        run: gh release create "$V" --title "$V" --generate-notes --verify-tag
 
       # Condicional de proposito, e nao por cautela: o `pod trunk push` roda um lint que **clona o
       # repositorio** a partir do `s.source`. Enquanto ele for privado, esse clone falha e o passo
