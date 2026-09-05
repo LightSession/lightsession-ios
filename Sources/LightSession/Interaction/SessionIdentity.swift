@@ -12,11 +12,15 @@ public struct SessionIdentity: Sendable {
 
     /// How long a session survives with nothing happening.
     ///
-    /// **Must match the server's `LS_SESSION__IDLE_TIMEOUT_SECS`.** The reaper on the server finalises a
-    /// session once it has been idle that long; a client that rotates sooner produces two rows where the
-    /// server counted one, and a client that rotates later attaches events to a session that has already
-    /// been sealed. Thirty seconds is the server's default.
-    public static let defaultIdleTimeoutMillis: Int64 = 30_000
+    /// **Must match the server's session window, which is 20 seconds.** The reaper on the server finalises
+    /// a session once its key has gone that long without a batch; a client that rotates sooner produces two
+    /// rows where the server counted one, and a client that rotates later attaches events to a session that
+    /// has already been sealed.
+    ///
+    /// It is short for a session timeout because a foregrounded app never reaches it — the recorder's tick
+    /// keeps batches flowing while the app is in front — so the window is really the grace on a
+    /// *backgrounded* app, after which the recorder is stopped and the batches it kept alive stop with it.
+    public static let defaultIdleTimeoutMillis: Int64 = 20_000
 
     public private(set) var sessionId: String
     /// The stable per-install id, so a returning user is recognisable across sessions.
