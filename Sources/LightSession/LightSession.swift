@@ -244,13 +244,38 @@ public enum LightSession {
     /// ones just before someone gave up — are exactly the ones that go missing.
     private static func observeAppLifecycle(_ session: SessionCoordinator) {
         let centre = NotificationCenter.default
+
+        // True while recording is off *because the app is in the background*, and only then. It
+        // tells that apart from recording the app itself turned off through `stopRecording`:
+        // foreground resumes the first and must leave the second alone, or it would record a
+        // stretch the app asked not to have. Shared by both closures, which capture it by
+        // reference.
+        var pausedForBackground = false
+
         centre.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
             session.markBackgrounded()
             uploadWhatIsLeft()
+            // Recording stops with the app, and this is what makes a backgrounded session end.
+            // A running recorder keeps producing batches on its tick, and each one resets the
+            // server's session key — so a session whose recorder never stops never falls idle and
+            // is never sealed, however long the app is away. `stop()` returns true only when it
+            // was running, which is the same guard as the flag: recording the app already stopped
+            // is left as it is. The flush above has already sent what was buffered.
+            if Recording.shared.stop() {
+                pausedForBackground = true
+            }
         }
         centre.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
             // Time in the background is idle time — the server's reaper does not care why nothing arrived.
+            // Rotates the session id when the app was away longer than the idle window, which is timed
+            // to the same value the server seals on, so the resumed recorder never sends under an id the
+            // server has already closed.
             session.markForegrounded()
+            // Resume only what backgrounding paused.
+            if pausedForBackground {
+                pausedForBackground = false
+                Recording.shared.start()
+            }
         }
     }
 
