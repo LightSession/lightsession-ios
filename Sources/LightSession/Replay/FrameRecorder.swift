@@ -183,7 +183,7 @@ final class FrameRecorder {
         // One classification, three outputs; the alternative is lists that drift, and the one that drifts is
         // the one that stops covering something.
         let snapshot = window.lightSessionContent
-        guard let bitmap = ScreenshotRenderer.capture(
+        guard let captured = ScreenshotRenderer.capture(
             window: window,
             snapshot: snapshot,
             policy: maskPolicy,
@@ -202,8 +202,10 @@ final class FrameRecorder {
             userType: session.userType
         )
 
-        work.async {
-            self.absorb(bitmap, sequence: sequence, timestampMillis: nowMillis, identity: identity)
+        ScreenshotRenderer.whenStillCovered(captured) { bitmap in
+            self.work.async {
+                self.absorb(bitmap, sequence: sequence, timestampMillis: nowMillis, identity: identity)
+            }
         }
     }
 

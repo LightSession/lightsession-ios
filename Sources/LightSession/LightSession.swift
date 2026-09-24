@@ -409,6 +409,25 @@ public enum LightSession {
         ))
     }
 
+    /// What to cover on a screen the SDK cannot read, from the toolkit that painted it.
+    ///
+    /// For an embedder that draws its own screen into one view — Flutter paints everything into a
+    /// `FlutterView` — where the SDK's own walk finds nothing to cover. Call it for every frame the
+    /// toolkit paints, with the rectangles its text and images occupy, in the **window's points**.
+    ///
+    /// - Parameters:
+    ///   - generation: strictly increasing, one per painted frame. It is how a capture tells which
+    ///     frame its pixels are and whether the masks moved under it; see `SuppliedMasks`.
+    ///   - rects: what to cover; empty for a screen with nothing coverable, and **nil** when the
+    ///     toolkit could not measure the frame — every picture is refused until it can again, because
+    ///     the alternative is shipping a screen whose masks are unknown.
+    public static func setScreenMasks(generation: Int64, rects: [CGRect]?) {
+        SuppliedMasks.set(
+            generation: generation,
+            rects: rects?.map { Rect(left: $0.minX, top: $0.minY, right: $0.maxX, bottom: $0.maxY) }
+        )
+    }
+
     /// Reports the screen the app is on.
     ///
     /// Required for SwiftUI, available to anyone. Safe to call with the screen already showing: a repeat

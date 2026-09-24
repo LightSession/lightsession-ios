@@ -1519,7 +1519,7 @@ final class ScreenTracker {
         // must happen there (the pixels are about to change), while the JPEG encode is pure arithmetic
         // that would spend those milliseconds blocking the very animation the person just started.
         let policy = ScreenshotRenderer.MaskPolicy(text: config.maskText, images: config.maskImages)
-        guard let image = ScreenshotRenderer.capture(
+        guard let captured = ScreenshotRenderer.capture(
             window: window, snapshot: snapshot, alsoMaskedBy: alsoMaskedBy, policy: policy
         ) else {
             LightSessionLog.debug("\(screen) could not be rendered")
@@ -1532,31 +1532,33 @@ final class ScreenTracker {
         // screenshot body never writes it — that route replaces the image of a row the create
         // already made, and the row carries the density.
         let density = Double(window.screen.scale)
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let jpeg = ScreenshotRenderer.encode(image, quality: 0.6) else { return }
+        ScreenshotRenderer.whenStillCovered(captured) { image in
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let jpeg = ScreenshotRenderer.encode(image, quality: 0.6) else { return }
 
-            let withImage = ScreenReport(
-                compositeId: compositeId,
-                name: screen,
-                kind: kind,
-                skeleton: nil,
-                imageBase64: jpeg.base64EncodedString(),
-                width: frame.width,
-                height: frame.height,
-                density: density,
-                theme: theme,
-                appVersionName: appVersionName,
-                appVersionCode: appVersionCode
-            )
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.sender.replaceScreenshot(screen: withImage) { [weak self] result in
-                    switch result {
-                    case .success:
-                        self?.cache.recordScreenshot(forCapture: compositeId)
-                        LightSessionLog.debug("screenshot sent: \(screen) (\(jpeg.count) bytes)")
-                    case .failure(let error):
-                        LightSessionLog.error("screenshot \(screen) failed: \(error.localizedDescription)")
+                let withImage = ScreenReport(
+                    compositeId: compositeId,
+                    name: screen,
+                    kind: kind,
+                    skeleton: nil,
+                    imageBase64: jpeg.base64EncodedString(),
+                    width: frame.width,
+                    height: frame.height,
+                    density: density,
+                    theme: theme,
+                    appVersionName: appVersionName,
+                    appVersionCode: appVersionCode
+                )
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.sender.replaceScreenshot(screen: withImage) { [weak self] result in
+                        switch result {
+                        case .success:
+                            self?.cache.recordScreenshot(forCapture: compositeId)
+                            LightSessionLog.debug("screenshot sent: \(screen) (\(jpeg.count) bytes)")
+                        case .failure(let error):
+                            LightSessionLog.error("screenshot \(screen) failed: \(error.localizedDescription)")
+                        }
                     }
                 }
             }

@@ -15,6 +15,34 @@ enum ScreenshotRenderer {
     /// What gets covered. The rule itself lives in `MaskGeometry`, where a test can reach it.
     typealias MaskPolicy = MaskGeometry.Policy
 
+    /// A capture, and the embedder's plan its pixels were covered with — nil when no embedder has
+    /// spoken. See [whenStillCovered] for what the plan is kept for.
+    struct Captured {
+        let image: CGImage
+        let supplied: SuppliedMasks.Plan?
+    }
+
+    /// Hands [captured]'s image on once its embedder's masks are known to still cover it, or drops it.
+    ///
+    /// The embedder reports a frame's rectangles as it hands the frame to its raster thread, so a
+    /// report of a frame already on screen can still be on its way to the main thread when the
+    /// capture runs. The check waits two frames for those to land, then asks [SuppliedMasks.stillHolds]
+    /// — which fails when a frame the pixels could be carried its masks somewhere else. Without an
+    /// embedder there is nothing to wait for, and the image goes on at once, exactly as before.
+    static func whenStillCovered(_ captured: Captured, then deliver: @escaping (CGImage) -> Void) {
+        guard let plan = captured.supplied else {
+            deliver(captured.image)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(32)) {
+            guard SuppliedMasks.stillHolds(plan) else {
+                LightSessionLog.debug("the embedder's masks moved during the capture; frame not shipped")
+                return
+            }
+            deliver(captured.image)
+        }
+    }
+
     /// The window, masked, as pixels. **Main thread**: it reads the view hierarchy.
     ///
     /// Split from the encoding on purpose. This half has to be on the main thread and has to be inside
@@ -40,12 +68,26 @@ enum ScreenshotRenderer {
         alsoMaskedBy: ViewSnapshot? = nil,
         policy: MaskPolicy,
         scale: CGFloat? = nil
-    ) -> CGImage? {
+    ) -> Captured? {
         assert(Thread.isMainThread, "capturing reads the view hierarchy")
         let bounds = window.bounds
         guard bounds.width > 0, bounds.height > 0 else { return nil }
 
-        return BitmapRenderer.image(size: bounds.size, scale: scale ?? window.screen.scale) { cg in
+        // What an embedder said to cover, for content the walk cannot see — a Flutter screen is one
+        // view with nothing in it for the walk. Asked before a pixel is drawn: a report that could not
+        // measure, or rectangles that moved in the frames the pixels could be, mean no picture at all.
+        let supplied: SuppliedMasks.Plan?
+        switch SuppliedMasks.plan() {
+        case .none:
+            supplied = nil
+        case .cover(let plan):
+            supplied = plan
+        case .refuse:
+            LightSessionLog.debug("the embedder's masks are not settled; no picture taken")
+            return nil
+        }
+
+        let image = BitmapRenderer.image(size: bounds.size, scale: scale ?? window.screen.scale) { cg in
             // `drawHierarchy` rather than `layer.render(in:)`: the layer path misses anything drawn by
             // the compositor rather than by CoreAnimation — visual-effect blurs come out as holes, and
             // a wireframe with holes in it looks like a rendering bug in the product.
@@ -60,9 +102,22 @@ enum ScreenshotRenderer {
             if let alsoMaskedBy {
                 rects += maskRects(in: alsoMaskedBy, policy: policy, bounds: bounds)
             }
+            if let supplied {
+                rects += cgRects(supplied.rects, within: bounds)
+            }
             for rect in rects {
                 cg.fill(rect)
             }
+        }
+        return image.map { Captured(image: $0, supplied: supplied) }
+    }
+
+    /// Supplied rectangles as CoreGraphics ones, clipped to what is drawn.
+    private static func cgRects(_ rects: [Rect], within bounds: CGRect) -> [CGRect] {
+        rects.compactMap { rect in
+            let cg = CGRect(x: rect.left, y: rect.top, width: rect.width, height: rect.height)
+                .intersection(bounds)
+            return (cg.isNull || cg.width <= 0 || cg.height <= 0) ? nil : cg
         }
     }
 
@@ -104,13 +159,26 @@ enum ScreenshotRenderer {
         let bounds = window.bounds
         guard bounds.width > 0, bounds.height > 0 else { return frame }
 
+        // The embedder's masks as well, or the colours would be sampled off its uncovered text. A report
+        // that is not settled keeps the palette, the same answer as having no pixels to sample.
+        let supplied: [CGRect]
+        switch SuppliedMasks.plan() {
+        case .none:
+            supplied = []
+        case .cover(let plan):
+            supplied = cgRects(plan.rects, within: bounds)
+        case .refuse:
+            LightSessionLog.debug("the embedder's masks are not settled; keeping the palette")
+            return frame
+        }
+
         let sampled = BitmapRenderer.withPixels(
             size: bounds.size,
             scale: window.screen.scale,
             draw: { cg in
                 window.drawHierarchy(in: bounds, afterScreenUpdates: false)
                 cg.setFillColor(maskFill(for: window))
-                for rect in maskRects(in: snapshot, policy: policy, bounds: bounds) {
+                for rect in maskRects(in: snapshot, policy: policy, bounds: bounds) + supplied {
                     cg.fill(rect)
                 }
             },
@@ -165,10 +233,14 @@ enum ScreenshotRenderer {
         quality: CGFloat = 0.6,
         scale: CGFloat? = nil
     ) -> Data? {
-        guard let image = capture(window: window, snapshot: snapshot, policy: policy, scale: scale) else {
+        guard let captured = capture(window: window, snapshot: snapshot, policy: policy, scale: scale),
+              captured.supplied == nil
+        else {
+            // A capture an embedder's masks cover has to be checked after it is taken, which a
+            // synchronous answer cannot wait for. Nothing calls this for one; refusing keeps it so.
             return nil
         }
-        return encode(image, quality: quality)
+        return encode(captured.image, quality: quality)
     }
 
     /// The rectangles to cover, in the window's own coordinate space.
