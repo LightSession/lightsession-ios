@@ -502,6 +502,16 @@ public enum LightSession {
         SuppliedScreen.clear()
     }
 
+    /// The appearance the app draws in, when it chooses one itself.
+    ///
+    /// For a toolkit that decides its own theme — a Flutter app with `ThemeMode.dark` draws dark on
+    /// a device in light mode — where the window's trait, which captures are filed under, says
+    /// otherwise. Nil follows the platform again. A native app needs none of this: forcing a theme
+    /// natively goes through the trait, and the SDK reads it from there.
+    public static func setAppearance(dark: Bool?) {
+        SuppliedScreen.setDark(dark)
+    }
+
     /// Reports the screen the app is on.
     ///
     /// Required for SwiftUI, available to anyone. Safe to call with the screen already showing: a repeat

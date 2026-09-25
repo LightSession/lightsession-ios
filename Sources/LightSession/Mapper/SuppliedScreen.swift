@@ -51,6 +51,31 @@ public enum SuppliedScreen {
 
     private static let lock = NSLock()
     private static var current: Standing?
+    private static var appearance: Bool?
+
+    /// The appearance the embedder draws in, or nil to follow the platform's.
+    ///
+    /// A capture is filed under a theme, read from the window's trait — which is the app's too for
+    /// a native app, since a native app that forces dark mode does it through the trait. A toolkit
+    /// can draw dark on its own: a Flutter app with `ThemeMode.dark` paints dark on a device in light
+    /// mode, and nothing in UIKit says so. Measured with such an app on a simulator: its screen, dark
+    /// to the pixel, was filed as `Light`, wireframe and screenshot both, in the slot its light
+    /// rendering would take.
+    ///
+    /// App-wide rather than per screen, unlike the description: an app's theme is not a property of
+    /// one screen, and a new screen is captured before its description arrives.
+    static var dark: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return appearance
+    }
+
+    /// Sets it; nil follows the platform again.
+    public static func setDark(_ dark: Bool?) {
+        lock.lock()
+        defer { lock.unlock() }
+        appearance = dark
+    }
 
     /// Replaces the standing description.
     ///
@@ -65,11 +90,13 @@ public enum SuppliedScreen {
         current = Standing(host: host, root: root, screenName: screenName)
     }
 
-    /// Forgets the standing description; the walk is the whole answer again.
+    /// Forgets the standing description, and the appearance with it; the walk and the platform are
+    /// the whole answer again.
     public static func clear() {
         lock.lock()
         defer { lock.unlock() }
         current = nil
+        appearance = nil
     }
 
     /// The description to draw `screen` with, or nil when there is none, its host has gone, or it

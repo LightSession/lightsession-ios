@@ -250,4 +250,11 @@ public enum ScreenIdentity {
 public enum Theme: String, Sendable {
     case light = "Light"
     case dark = "Dark"
+
+    /// The theme a capture is filed under: the embedder's appearance when it gave one, the
+    /// platform's otherwise. One rule for every capture, so a screen's wireframe and its screenshot
+    /// cannot land in different slots. See `SuppliedScreen.dark`.
+    static func filed(platformDark: Bool, embedderDark: Bool?) -> Theme {
+        (embedderDark ?? platformDark) ? .dark : .light
+    }
 }
