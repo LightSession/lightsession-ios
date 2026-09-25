@@ -9,10 +9,17 @@ import Foundation
 struct ErrorDetails {
     let handled: Bool
     let threadName: String
-    let threadId: UInt
+    /// Nil for an error an embedder reports: its thread is the runtime's, and a platform thread id
+    /// would name a thread the error never ran on.
+    let threadId: UInt?
     let exceptions: [[String: Any]]
     let attributes: [String: Any]
     let timestampMillis: Int64
+    /// How an error an embedder reports reached it — `platform_dispatcher`, `manual`. Nil for one this
+    /// SDK saw thrown, where `handled` already says it.
+    var mechanism: String? = nil
+    /// The build whose symbols name the frames' addresses, when they are addresses.
+    var symbols: ErrorSymbols? = nil
 
     /// The thread the capture is running on, named the way the wire expects.
     static func currentThread() -> (name: String, id: UInt) {
@@ -50,9 +57,11 @@ public struct ErrorEvent: Breadcrumb {
             "app_version": appVersion,
             "handled": details.handled,
             "thread": details.threadName,
-            "thread_id": details.threadId,
             "exceptions": details.exceptions,
         ]
+        if let threadId = details.threadId { crumb["thread_id"] = threadId }
+        if let mechanism = details.mechanism { crumb["mechanism"] = mechanism }
+        if let symbols = details.symbols { crumb["symbols"] = symbols.wire }
         // The names the ingest parser already reads off any crumb, so an error is attributed to its
         // screen even by a server that has never heard of the type.
         if let screen { crumb["screen"] = screen }
