@@ -477,6 +477,31 @@ public enum LightSession {
         )
     }
 
+    /// What is on a screen the SDK cannot read, from the toolkit that painted it — the wireframe's
+    /// counterpart of `setScreenMasks`.
+    ///
+    /// The SDK draws a wireframe by walking views, and a toolkit that paints into one view gives the
+    /// walk nothing: every such screen comes out a single rectangle. The toolkit describes it instead
+    /// — each box, what it is, its colour, how it nests — and the wireframe is drawn from that by the
+    /// rules a walked view follows, placed under `host` where the walk found nothing.
+    ///
+    /// Reported per settled screen rather than per frame, and whenever the screen changes: it is
+    /// structure, not geometry that has to match a particular frame's pixels. Masking never reads it.
+    ///
+    /// - Parameters:
+    ///   - root: the described content, in the **window's points**.
+    ///   - host: the view the toolkit paints into.
+    ///   - screenName: the screen it describes, as named with `setScreen`, so a description of the
+    ///     screen just left is not drawn as the one arrived at. Nil for no claim.
+    public static func setScreenContent(_ root: ViewSnapshot, in host: UIView, screenName: String?) {
+        SuppliedScreen.set(root: root, host: host, screenName: screenName)
+    }
+
+    /// Forgets the description `setScreenContent` gave; the walk is the whole answer again.
+    public static func clearScreenContent() {
+        SuppliedScreen.clear()
+    }
+
     /// Reports the screen the app is on.
     ///
     /// Required for SwiftUI, available to anyone. Safe to call with the screen already showing: a repeat

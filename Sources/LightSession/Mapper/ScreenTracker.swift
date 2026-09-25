@@ -34,6 +34,10 @@ final class ScreenTracker {
     /// The wireframe of the screen currently on the glass, as it looked when it was named. Sent only
     /// if that screen leaves before it settles — see `ArrivalCapture`.
     private var arrival: ArrivalCapture?
+    /// The layout of the wireframe this run last sent for each capture slot, by `layoutKey`. What
+    /// lets a described screen be resent when its description changed and stay silent when it did
+    /// not — the one case the rectangle bar cannot decide. See `upload`.
+    private var sentLayouts: [String: Int] = [:]
     private let appVersionName: String
     private let appVersionCode: Int
 
@@ -824,8 +828,9 @@ final class ScreenTracker {
             signature: {
                 // The window, so a modal's content counts towards "has this settled" too. A sheet
                 // sliding in over an empty screen is content arriving — and a sheet still sliding is
-                // geometry still moving.
-                SkeletonBuilder.contentSignature(window.lightSessionContent)
+                // geometry still moving. With the embedder's description in it, so a description
+                // arriving mid-settle is waited for rather than photographed before it lands.
+                SkeletonBuilder.contentSignature(window.lightSessionWireframeContent(for: screen))
             },
             onSettled: { [weak self] settled in
                 guard let self else { return }
@@ -907,7 +912,7 @@ final class ScreenTracker {
     private func upgradeArrivalAfterLayout(screen: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.lastReported == screen, let window = self.keyWindow() else { return }
-            let snapshot = self.arrivalSnapshot(in: window)
+            let snapshot = self.arrivalSnapshot(of: screen, in: window)
             self.refreshArrival(
                 screen: screen,
                 from: snapshot,
@@ -954,9 +959,9 @@ final class ScreenTracker {
     /// Measured on the sample: the hub's arrival copy reported 516×960, and the server filed it as
     /// a *variant* of the hub beside the real 1206×2622 one, since a capture is keyed by its size.
     /// A screen is the size of the window whichever subtree was read for its contents.
-    private func arrivalSnapshot(in window: UIWindow) -> ViewSnapshot {
+    private func arrivalSnapshot(of screen: String, in window: UIWindow) -> ViewSnapshot {
         let root = arrivalRoot(in: window)
-        let content = root.lightSessionSnapshot(in: window)
+        let content = root.lightSessionSnapshot(in: window, describing: SuppliedScreen.graft(for: screen))
         guard root !== window else { return content }
         return ViewSnapshot(
             frame: window.lightSessionFrame(in: window),
@@ -985,7 +990,7 @@ final class ScreenTracker {
     }
 
     private func rememberArrival(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
-        let snapshot = arrivalSnapshot(in: window)
+        let snapshot = arrivalSnapshot(of: screen, in: window)
         guard let frame = SkeletonBuilder.build(
             root: snapshot,
             scale: Double(window.screen.scale),
@@ -1071,7 +1076,14 @@ final class ScreenTracker {
     private func upload(screen: String, kind: ScreenIdentity.Kind, window: UIWindow) {
         // From the window: a screen that *is* a modal lives outside the root view. See
         // `UIWindow.lightSessionContent`.
-        let snapshot = window.lightSessionContent
+        let walked = window.lightSessionContent
+        // The wireframe is drawn from the embedder's description where it gave one; the screenshot
+        // below keeps the walk, because its masks do. Nil when there is no description of this
+        // screen, or its host is not in this window — the walk is then the whole answer.
+        let described = SuppliedScreen.graft(for: screen)
+            .map { window.lightSessionSnapshot(in: window, describing: $0) }
+            .flatMap { $0 == walked ? nil : $0 }
+        let snapshot = described ?? walked
         let scale = Double(window.screen.scale)
         guard let built = SkeletonBuilder.build(
             root: snapshot,
@@ -1114,7 +1126,17 @@ final class ScreenTracker {
         // a spinner stored on the first visit is replaced the first time a richer capture shows up —
         // and what makes it converge: equal-or-poorer captures are silence. Recolouring waits until
         // the bar is cleared, so the pixels of a screen that will not be sent are never read.
-        if built.nodes.count > state.wireframeRects {
+        //
+        // Except for a description. The bar stands in for "more of the screen" because a walk that
+        // catches a screen mid-load finds less of it; a description is the toolkit saying what it
+        // painted, so a newer one is better information whatever its size. Under the bar alone, a
+        // screen simpler than the first description filed for it would be refused for the life of
+        // the install — measured on Android, where a screen of sixteen rectangles could not replace
+        // a transitional description of fifty-two. Sent when its layout is not the one this run
+        // last sent for the slot, so a screen revisited unchanged is still silence.
+        let newerDescription = described != nil
+            && sentLayouts[compositeId] != SkeletonBuilder.layoutKey(built)
+        if built.nodes.count > state.wireframeRects || newerDescription {
             send(
                 wireframe: built, snapshot: snapshot, screen: screen, kind: kind,
                 compositeId: compositeId, theme: theme, window: window
@@ -1136,7 +1158,7 @@ final class ScreenTracker {
         )
 
         guard config.captureRealScreens, !state.hasScreenshot else { return }
-        scheduleScreenshot(screen: screen, kind: kind, window: window, settledAs: snapshot)
+        scheduleScreenshot(screen: screen, kind: kind, window: window, settledAs: walked)
     }
 
     /// Recolours and sends one wireframe. One path for both callers — the first capture and a
@@ -1199,6 +1221,7 @@ final class ScreenTracker {
                 // The count raises the bar; the bar is monotonic, so a first send and a late upgrade
                 // completing out of order cannot lower it.
                 self?.cache.recordWireframe(forCapture: compositeId, rects: frame.nodes.count)
+                self?.sentLayouts[compositeId] = SkeletonBuilder.layoutKey(frame)
                 LightSessionLog.debug("wireframe sent: \(screen) (\(frame.nodes.count) rect(s))")
             case .failure(let error):
                 // Not cached on failure, so the next visit tries again. Caching an upload that did
@@ -1250,10 +1273,13 @@ final class ScreenTracker {
     ) {
         guard rescansLeft > 0 else { return }
 
+        // The embedder's description is part of what the watch reads, and that is how a Flutter
+        // screen's wireframe catches up: the walk of one never changes, so a new description is the
+        // only news there is of its content arriving.
         lateContent.arm(
-            baseline: SkeletonBuilder.contentSignature(window.lightSessionContent),
+            baseline: SkeletonBuilder.contentSignature(window.lightSessionWireframeContent(for: screen)),
             signature: { [weak window] in
-                window.map { SkeletonBuilder.contentSignature($0.lightSessionContent) }
+                window.map { SkeletonBuilder.contentSignature($0.lightSessionWireframeContent(for: screen)) }
             }
         ) { [weak self, weak window] in
             guard let self, let window else { return }
@@ -1262,11 +1288,11 @@ final class ScreenTracker {
             guard self.lastReported == screen else { return }
 
             self.lateSettle.await(
-                signature: { SkeletonBuilder.contentSignature(window.lightSessionContent) },
+                signature: { SkeletonBuilder.contentSignature(window.lightSessionWireframeContent(for: screen)) },
                 onSettled: { [weak self, weak window] _ in
                     guard let self, let window, self.lastReported == screen else { return }
 
-                    let snapshot = window.lightSessionContent
+                    let snapshot = window.lightSessionWireframeContent(for: screen)
                     guard let fresh = SkeletonBuilder.build(
                         root: snapshot,
                         scale: Double(window.screen.scale),
