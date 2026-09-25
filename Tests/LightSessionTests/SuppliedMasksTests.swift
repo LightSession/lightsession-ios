@@ -68,12 +68,22 @@ final class SuppliedMasksTests: XCTestCase {
     /// A screen that painted once and then stopped — an app sitting on a still screen — is on screen
     /// by now, and has to be capturable.
     func testAStillScreenIsCoveredOnceThePipelineHasDrained() {
+        let drained = SuppliedMasks.drainedAfterMillis
         SuppliedMasks.set(generation: 1, rects: a, nowMillis: 0)
-        XCTAssertEqual(SuppliedMasks.plan(nowMillis: 100), .refuse, "frame 1 may not be on screen yet")
-        guard case .cover(let plan) = SuppliedMasks.plan(nowMillis: 600) else {
-            return XCTFail("half a second with no new frame: frame 1 is what the screen shows")
+        XCTAssertEqual(SuppliedMasks.plan(nowMillis: drained - 1), .refuse, "frame 1 may not be on screen yet")
+        guard case .cover(let plan) = SuppliedMasks.plan(nowMillis: drained) else {
+            return XCTFail("no new frame for the whole wait: frame 1 is what the screen shows")
         }
         XCTAssertEqual(plan.oldestOnScreen, 1)
+    }
+
+    /// The wait is what a screen that moves now and then pays, so it is held to what was measured:
+    /// at 500 ms a list jumping every 700 ms kept 8 of its 22 distinct frames.
+    func testAScreenThatMovesEveryFewHundredMillisecondsIsCapturedBetweenMoves() {
+        SuppliedMasks.set(generation: 1, rects: a, nowMillis: 0)
+        guard case .cover = SuppliedMasks.plan(nowMillis: 200) else {
+            return XCTFail("200 ms after a jump, with nothing painted since, is a frame to take")
+        }
     }
 
     func testPixelsStayCoveredWhileLaterFramesKeepTheRectangles() {

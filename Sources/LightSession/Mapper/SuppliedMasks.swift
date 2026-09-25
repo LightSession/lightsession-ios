@@ -40,8 +40,16 @@ public enum SuppliedMasks {
     /// Frames the raster pipeline can be behind the latest report. Two: one being drawn, one queued.
     static let pipelineDepth: Int64 = 2
 
-    /// How long after a report, with no newer one, its frame is certain to be on screen.
-    static let drainedAfterMillis: Int64 = 500
+    /// How long after a report, with no newer one, its frame is taken to be on screen.
+    ///
+    /// 150 ms, down from 500, and measured both ways with the Flutter example's list on a simulator.
+    /// The wait is what a screen that moves now and then pays: at 500 ms a list jumping every 700 ms
+    /// shipped 8 distinct frames to the replay, against 22 with no rule at all; at 150 ms, 24. And it
+    /// still covers a raster thread far behind: with the list made to take 40 ms a frame at the
+    /// median, 60 ms at p95, every frame over budget, no rule left 8 frames with text showing beside
+    /// its masks, and 150 ms left none, twice. A raster slower than this can still outrun it — so
+    /// can one slower than 500 ms, and the check after the capture is what stands behind both.
+    static let drainedAfterMillis: Int64 = 150
 
     struct Report: Equatable {
         let generation: Int64
