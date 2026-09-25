@@ -67,6 +67,16 @@ public enum MaskGeometry {
             CoveredContent.discardCovered(&out, by: node.frame, captureBounds: bounds, frameOf: { $0 })
         }
 
+        // A web page or a map, covered whole and not walked into. What is on it is drawn by the page or
+        // the map, not by any view this walk can read, so a WKWebView was a node with no text under it
+        // and every capture of one shipped legible. Either flag is enough: a page carries both text and
+        // pictures, and a map's street names are text drawn as pictures. The replay shows a grey block
+        // where it is — the price of not being able to tell which part of it is which.
+        if node.unreadable && (policy.text || policy.images) {
+            if let visible = node.frame.clipped(to: bounds) { out.append(visible) }
+            return
+        }
+
         if isCovered(node.kind, by: policy), let visible = node.frame.clipped(to: bounds) {
             out.append(visible)
         }

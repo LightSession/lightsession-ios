@@ -29,6 +29,42 @@ final class MaskGeometryTests: XCTestCase {
         ViewSnapshot(frame: frame, kind: .text)
     }
 
+    // MARK: - Content the walk cannot read
+
+    /// A web page or a map is drawn by something the walk cannot see into, so it is covered whole —
+    /// under either flag, since a page carries text and pictures and a map's street names are both.
+    func testUnreadableContentIsCoveredWholeUnderEitherFlag() {
+        let page = ViewSnapshot(frame: rect(0, 100, 390, 700), kind: .webView, unreadable: true)
+        let screen = ViewSnapshot(frame: window, kind: .container, children: [page])
+        for policy in [MaskGeometry.Policy(text: true, images: false), MaskGeometry.Policy(text: false, images: true)] {
+            XCTAssertEqual(MaskGeometry.rects(in: screen, policy: policy, bounds: window), [rect(0, 100, 390, 700)])
+        }
+        XCTAssertEqual(
+            MaskGeometry.rects(in: screen, policy: MaskGeometry.Policy(text: false, images: false), bounds: window),
+            [],
+            "an app that masks nothing has said its screens are safe to record as they are"
+        )
+    }
+
+    /// Covered whole, and not walked into: a rectangle for something inside it would be a second
+    /// block on the same page, and the walk cannot know what is inside it anyway.
+    func testUnreadableContentIsNotWalkedInto() {
+        let map = ViewSnapshot(
+            frame: rect(0, 100, 390, 700),
+            kind: .container,
+            children: [label(rect(20, 200, 200, 230))],
+            unreadable: true
+        )
+        let screen = ViewSnapshot(frame: window, kind: .container, children: [map])
+        XCTAssertEqual(MaskGeometry.rects(in: screen, policy: .default, bounds: window), [rect(0, 100, 390, 700)])
+    }
+
+    /// A web view the walk can read nothing of was left legible when only its kind was consulted.
+    func testAWebViewIsCoveredByDefault() {
+        let page = ViewSnapshot(frame: rect(0, 0, 390, 844), kind: .webView, unreadable: true)
+        XCTAssertFalse(MaskGeometry.rects(in: page, policy: .default, bounds: window).isEmpty)
+    }
+
     // MARK: - The reported bug
 
     /// Mid-transition both view controllers' views are in the window. Only the top one is on screen.

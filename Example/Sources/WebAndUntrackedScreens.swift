@@ -47,8 +47,8 @@ final class WebViewScreen: UIViewController {
             <body style="font: 17px -apple-system; padding: 24px; color: #16181d">
               <h2>A document</h2>
               <p>This paragraph is rendered by WebKit. The SDK sees a web view and nothing inside it.</p>
-              <p>Sensitive text here would not be covered by the mask scanner, which is the reason a
-                 web view is worth its own kind rather than being drawn as a plain container.</p>
+              <p>So the page is covered whole when text or images are masked, and drawn as a web view
+                 of its own kind in the wireframe rather than as a plain container.</p>
             </body>
             """,
             baseURL: nil

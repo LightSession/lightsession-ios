@@ -49,6 +49,11 @@ public struct ViewSnapshot: Equatable, Sendable {
     /// read, so nothing downstream has to know about `CACornerMask` at all.
     public var cornerRadii: [Double]?
     public var children: [ViewSnapshot]
+    /// Content the walk cannot read — a web page, a map — which masking covers whole when either text
+    /// or images are masked. What it holds is drawn by something the SDK cannot see into, so no
+    /// narrower rectangle can be trusted to cover it. Its kind is what it is; this says nothing about
+    /// how the wireframe draws it.
+    public var unreadable: Bool
 
     public init(
         frame: Rect,
@@ -60,7 +65,8 @@ public struct ViewSnapshot: Equatable, Sendable {
         declaresOpaque: Bool = false,
         drawsBorderOnly: Bool = false,
         cornerRadii: [Double]? = nil,
-        children: [ViewSnapshot] = []
+        children: [ViewSnapshot] = [],
+        unreadable: Bool = false
     ) {
         self.frame = frame
         self.kind = kind
@@ -72,6 +78,7 @@ public struct ViewSnapshot: Equatable, Sendable {
         self.drawsBorderOnly = drawsBorderOnly
         self.cornerRadii = cornerRadii
         self.children = children
+        self.unreadable = unreadable
     }
 }
 
