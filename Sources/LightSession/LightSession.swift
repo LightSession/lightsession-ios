@@ -25,6 +25,10 @@ public enum LightSession {
 
     private static var tracker: ScreenTracker?
     private static var interactions: InteractionRecorder?
+
+    /// `LightSessionConfig.captureErrors`, kept for the entry point an embedder calls: the uncaught
+    /// handler is simply not installed without it, and `recordError` has to honour it too.
+    private static var capturesErrors = true
     private static var replay: FrameRecorder?
     /// One session for the touches and the frames both. Two owners means two ids, and the product then
     /// shows a replay with no interactions beside a session with no video.
@@ -187,6 +191,7 @@ public enum LightSession {
         // never evicts breadcrumbs — durability is inherited, not built. Installed only when the
         // recorder exists: with `trackInteractions` off there is nowhere durable to put a crash,
         // and a handler that captures into the void would be worse than none.
+        capturesErrors = config.captureErrors
         if config.captureErrors, let recorder = interactions {
             let appModule = Bundle.main.object(forInfoDictionaryKey: "CFBundleExecutable") as? String ?? ""
             ErrorCapture.install { [weak recorder] exception in
@@ -406,6 +411,50 @@ public enum LightSession {
             exceptions: ErrorCrumb.exceptions(for: error, stack: stack, appModule: appModule),
             attributes: attributes,
             timestampMillis: Int64(Date().timeIntervalSince1970 * 1000)
+        ))
+    }
+
+    /// Records an error the SDK did not see thrown, from a runtime whose errors are not Swift errors.
+    ///
+    /// The companion to `recordRequest`: that one is for a request from a client no hook of ours sits
+    /// in, this one for an error from a runtime none sits in — a Dart exception in a Flutter app. The
+    /// embedder describes it in its own terms, and it is stored in exactly the shape a caught native
+    /// error takes, attributed to the current screen and placed on the same timeline.
+    ///
+    /// - Parameters:
+    ///   - type: the runtime's own name for the error — `StateError`. The server groups by it, so a
+    ///     wrapper's name here would put every error of the runtime in one group.
+    ///   - frames: from the throw site outward, each saying whether it is the app's own code.
+    ///   - handled: whether the app survived, which the dashboard shows as the difference between an
+    ///     error and a crash. An error that escaped the app's handlers without ending the process is
+    ///     handled, and [mechanism] says what it escaped through — `manual` for one the app reported.
+    ///   - symbols: the build whose symbols name the frames, when they are addresses.
+    ///
+    /// Obeys `LightSessionConfig.captureErrors`. Callable from any thread.
+    public static func recordError(
+        type: String,
+        message: String?,
+        frames: [ErrorFrame],
+        handled: Bool = true,
+        mechanism: String = "manual",
+        thread: String = "main",
+        attributes: [String: Any] = [:],
+        symbols: ErrorSymbols? = nil
+    ) {
+        guard let recorder = interactions else {
+            LightSessionLog.info("recordError before start; ignored")
+            return
+        }
+        guard capturesErrors else { return }
+        recorder.record(error: ErrorDetails(
+            handled: handled,
+            threadName: thread,
+            threadId: nil,
+            exceptions: ErrorCrumb.reported(type: type, message: message, frames: frames),
+            attributes: attributes,
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1000),
+            mechanism: mechanism,
+            symbols: symbols
         ))
     }
 
