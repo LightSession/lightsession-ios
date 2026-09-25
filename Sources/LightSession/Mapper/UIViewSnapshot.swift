@@ -35,7 +35,8 @@ extension UIView {
             declaresOpaque: isOpaque,
             // A view's corners live on its layer, which is also where an app sets them.
             cornerRadii: layer.lightSessionCornerRadii,
-            children: lightSessionChildrenInPaintOrder(in: window)
+            children: lightSessionChildrenInPaintOrder(in: window),
+            unreadable: self is WKWebView || NativeMaps.isMap(self)
         )
     }
 

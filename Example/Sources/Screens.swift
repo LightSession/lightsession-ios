@@ -60,6 +60,7 @@ final class HubViewController: UIViewController {
             // `NodeKind.webView` existed and nothing produced one. A web view is also the one thing the
             // SDK cannot describe from inside: the page is another process.
             Route("web", "Web view", { WebViewScreen() }),
+            Route("map", "A map", { MapScreen() }),
         ]),
 
         // Four controllers that hold screens without being one. All four call `viewDidAppear` next to
