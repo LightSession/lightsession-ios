@@ -55,6 +55,27 @@ final class SuppliedScreenTests: XCTestCase {
         XCTAssertNil(SuppliedScreen.graft(for: "home"))
     }
 
+    // MARK: - Appearance
+
+    /// A Flutter app with `ThemeMode.dark` draws dark on a device in light mode, and the trait — all
+    /// the SDK read — said light: measured on a simulator, a screen dark to the pixel filed as Light.
+    func testAnEmbedderDrawingDarkOnALightDeviceIsFiledDark() {
+        XCTAssertEqual(Theme.filed(platformDark: false, embedderDark: nil), .light)
+        XCTAssertEqual(Theme.filed(platformDark: true, embedderDark: nil), .dark)
+        XCTAssertEqual(Theme.filed(platformDark: false, embedderDark: true), .dark)
+        XCTAssertEqual(Theme.filed(platformDark: true, embedderDark: false), .light)
+    }
+
+    func testTheAppearanceStandsUntilItIsWithdrawn() {
+        SuppliedScreen.setDark(true)
+        XCTAssertEqual(SuppliedScreen.dark, true)
+        SuppliedScreen.setDark(nil)
+        XCTAssertNil(SuppliedScreen.dark, "nil follows the platform again")
+        SuppliedScreen.setDark(true)
+        SuppliedScreen.clear()
+        XCTAssertNil(SuppliedScreen.dark, "an embedder going away takes its appearance with it")
+    }
+
     // MARK: - Layout keys
 
     private func frame(_ nodes: [SkeletonNode]) -> SkeletonFrame {

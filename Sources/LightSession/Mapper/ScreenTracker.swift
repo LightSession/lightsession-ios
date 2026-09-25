@@ -1000,7 +1000,7 @@ final class ScreenTracker {
             arrival = nil
             return
         }
-        let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let theme = Self.theme(of: window)
         arrival = ArrivalCapture(
             screen: screen,
             kind: kind,
@@ -1064,6 +1064,14 @@ final class ScreenTracker {
         }
     }
 
+    /// The theme every capture of this window is filed under. See `Theme.filed`.
+    private static func theme(of window: UIWindow) -> Theme {
+        Theme.filed(
+            platformDark: window.traitCollection.userInterfaceStyle == .dark,
+            embedderDark: SuppliedScreen.dark
+        )
+    }
+
     private func refinePlan(for window: UIWindow) {
         guard let root = window.rootViewController else { return }
         let hostsSwiftUI = root.isLightSessionHostingController
@@ -1097,7 +1105,7 @@ final class ScreenTracker {
             return
         }
 
-        let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let theme = Self.theme(of: window)
         let compositeId = ScreenIdentity.compositeId(
             name: screen,
             appVersionName: appVersionName,
@@ -1533,7 +1541,7 @@ final class ScreenTracker {
             background: window.lightSessionBackground
         ) else { return }
 
-        let theme: Theme = window.traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let theme = Self.theme(of: window)
         // Recomputed rather than carried from the wireframe: the device can have rotated during the wait, and a
         // screenshot at a different size is a different capture — filing it under the old id would put a
         // landscape picture in a portrait slot.
