@@ -40,6 +40,12 @@ final class ScreenTracker {
     private var plan: ScreenSourcePlan
     /// The screen the app is on, as a bare name — no sub-screen.
     private var currentScreen: String?
+
+    /// What the current screen was entered as, and so what every part of it is reported as: a sheet, an
+    /// alert or a declared sub-screen of a Flutter screen is part of a Flutter screen. They used to be
+    /// reported as UIKit whatever the screen was, which filed a Flutter app's sub-screens and the native
+    /// dialogs over it as UIKit screens in its graph.
+    private var currentKind: ScreenIdentity.Kind = .uiKit
     /// The parts of the current screen in view, as three fixed layers: what the app declared, then a
     /// modal host over it, then an alert over both. Layers rather than one slot — with one slot an
     /// alert would replace the declared panel it was raised over, and the map would lose where the
@@ -338,7 +344,7 @@ final class ScreenTracker {
             actionStyleRaws: alert.actions.map { $0.style.rawValue },
             textFieldCount: alert.textFields?.count ?? 0
         )
-        report(screen: screen, kind: .uiKit, transition: "subscreen")
+        report(screen: screen, kind: currentKind, transition: "subscreen")
     }
 
     /// The modal layer when the host names the screens — the only role controllers play in that plan.
@@ -371,7 +377,7 @@ final class ScreenTracker {
             "modal layer \"\(label)\" from \(type(of: controller)) "
                 + "style=\(controller.modalPresentationStyle.rawValue)"
         )
-        report(screen: screen, kind: .uiKit, transition: "subscreen")
+        report(screen: screen, kind: currentKind, transition: "subscreen")
     }
 
     /// The facts `modalLayerName` needs, read off a live controller.
@@ -435,7 +441,7 @@ final class ScreenTracker {
         modalHost = nil
         modalHostSubScreen = nil
         guard let screen = currentScreen else { return }
-        report(screen: screen, kind: .uiKit, transition: "subscreen")
+        report(screen: screen, kind: currentKind, transition: "subscreen")
     }
 
     /// The other half: only the tracked alert's own dismissal clears the layer.
@@ -449,7 +455,7 @@ final class ScreenTracker {
         modalAlert = nil
         modalSubScreen = nil
         guard let screen = currentScreen else { return }
-        report(screen: screen, kind: .uiKit, transition: "subscreen")
+        report(screen: screen, kind: currentKind, transition: "subscreen")
     }
 
     /// Re-reads what is on screen after something goes away.
@@ -676,7 +682,7 @@ final class ScreenTracker {
         }
         guard let screen = currentScreen else { return }
         declaredSubScreen = label
-        report(screen: screen, kind: .uiKit, transition: "subscreen")
+        report(screen: screen, kind: currentKind, transition: "subscreen")
     }
 
     func clearSubScreen(_ name: String) {
@@ -685,7 +691,7 @@ final class ScreenTracker {
         // never returned to.
         guard declaredSubScreen == ScreenIdentity.subScreenLabel(name), let screen = currentScreen else { return }
         declaredSubScreen = nil
-        report(screen: screen, kind: .uiKit, transition: "subscreen")
+        report(screen: screen, kind: currentKind, transition: "subscreen")
     }
 
     // MARK: - The sequence
@@ -699,6 +705,7 @@ final class ScreenTracker {
         modalSubScreen = nil
         modalAlert = nil
         currentScreen = name
+        currentKind = kind
         report(screen: name, kind: kind, transition: transition)
     }
 
