@@ -8,12 +8,12 @@ Session recording for iOS, native Swift, no dependencies.
 
 ```swift
 // Swift Package Manager
-.package(url: "https://github.com/LightSession/lightsession-ios.git", from: "0.5.0")
+.package(url: "https://github.com/LightSession/lightsession-ios.git", from: "0.6.0")
 ```
 
 ```ruby
 # CocoaPods
-pod 'LightSession', '~> 0.5'
+pod 'LightSession', '~> 0.6'
 ```
 
 Unlike the Android SDK, whose artefact lives on Maven Central, both of these resolve by cloning
