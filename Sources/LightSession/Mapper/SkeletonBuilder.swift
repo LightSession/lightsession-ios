@@ -159,6 +159,22 @@ public enum SkeletonBuilder {
         }
     }
 
+    /// The layout `sameGeometry` compares, as one number: two frames with the same key draw the same
+    /// rectangles of the same kinds in the same order, whatever their colours.
+    public static func layoutKey(_ frame: SkeletonFrame) -> Int {
+        var hasher = Hasher()
+        hasher.combine(frame.width)
+        hasher.combine(frame.height)
+        for node in frame.nodes {
+            hasher.combine(node.left)
+            hasher.combine(node.top)
+            hasher.combine(node.right)
+            hasher.combine(node.bottom)
+            hasher.combine(node.kind)
+        }
+        return hasher.finalize()
+    }
+
     /// Whether a late-content recapture may replace the capture already stored under `screen`.
     ///
     /// Two events grow the rectangle count and nothing else separates them by number:

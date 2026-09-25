@@ -24,8 +24,17 @@ import WebKit
 extension UIView {
 
     /// This view and everything under it, in the coordinate space of `window`.
-    func lightSessionSnapshot(in window: UIWindow) -> ViewSnapshot {
-        ViewSnapshot(
+    ///
+    /// - Parameter graft: an embedder's description of what its host view draws, placed under that
+    ///   view when the walk reaches it. For the wireframe only — see `SuppliedScreen`.
+    func lightSessionSnapshot(in window: UIWindow, describing graft: SuppliedScreen.Graft? = nil) -> ViewSnapshot {
+        var children = lightSessionChildrenInPaintOrder(in: window, describing: graft)
+        // First, so the host's own subviews paint over it: a view the platform puts inside the host
+        // — a native view embedded in a Flutter screen — is drawn on top of the toolkit's content.
+        if let graft, graft.host === self {
+            children.insert(graft.root, at: 0)
+        }
+        return ViewSnapshot(
             frame: lightSessionFrame(in: window),
             kind: lightSessionKind,
             isHidden: isHidden,
@@ -35,7 +44,7 @@ extension UIView {
             declaresOpaque: isOpaque,
             // A view's corners live on its layer, which is also where an app sets them.
             cornerRadii: layer.lightSessionCornerRadii,
-            children: lightSessionChildrenInPaintOrder(in: window),
+            children: children,
             unreadable: self is WKWebView || NativeMaps.isMap(self)
         )
     }
@@ -60,9 +69,12 @@ extension UIView {
     /// The old order was chosen for the mask, on the grounds that a cover arriving last discards more
     /// and errs towards masking. Correct order errs the same way for the only case that matters: a
     /// node genuinely behind an opaque cover is one the screenshot does not show either.
-    func lightSessionChildrenInPaintOrder(in window: UIWindow) -> [ViewSnapshot] {
+    func lightSessionChildrenInPaintOrder(
+        in window: UIWindow,
+        describing graft: SuppliedScreen.Graft? = nil
+    ) -> [ViewSnapshot] {
         guard let sublayers = layer.sublayers, !sublayers.isEmpty else {
-            return subviews.map { $0.lightSessionSnapshot(in: window) }
+            return subviews.map { $0.lightSessionSnapshot(in: window, describing: graft) }
         }
 
         var children: [ViewSnapshot] = []
@@ -74,7 +86,7 @@ extension UIView {
                 // at the position the layer list gives it.
                 guard let index = unplaced.firstIndex(where: { $0 === owner }) else { continue }
                 unplaced.remove(at: index)
-                children.append(owner.lightSessionSnapshot(in: window))
+                children.append(owner.lightSessionSnapshot(in: window, describing: graft))
             } else {
                 children.append(contentsOf: LayerContent.node(for: sublayer))
             }
@@ -82,7 +94,7 @@ extension UIView {
 
         // A subview whose layer is not a direct sublayer of this one still has to be described. It
         // should not happen; losing a screen's content to an assumption about UIKit would.
-        children.append(contentsOf: unplaced.map { $0.lightSessionSnapshot(in: window) })
+        children.append(contentsOf: unplaced.map { $0.lightSessionSnapshot(in: window, describing: graft) })
         return children
     }
 
@@ -219,6 +231,13 @@ extension UIWindow {
     /// rectangles of the screen it hides instead of drawing them on top of it.
     var lightSessionContent: ViewSnapshot {
         lightSessionSnapshot(in: self)
+    }
+
+    /// The same, with the description an embedder gave of `screen` placed under the view it
+    /// describes. What a wireframe of that screen is drawn from — and nothing else: masking reads
+    /// `lightSessionContent`. See `SuppliedScreen`.
+    func lightSessionWireframeContent(for screen: String?) -> ViewSnapshot {
+        lightSessionSnapshot(in: self, describing: SuppliedScreen.graft(for: screen))
     }
 }
 #endif
