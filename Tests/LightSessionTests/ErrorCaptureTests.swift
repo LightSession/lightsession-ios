@@ -49,6 +49,35 @@ final class ErrorCaptureTests: XCTestCase {
         XCTAssertTrue(forwarded[1] === second)
     }
 
+    /// React Native's `RCTFatalException` after the JavaScript crash was reported in its own terms: the
+    /// same death, so no second capture — and the previous handler still runs, or the app would not die.
+    func testADeathAnEmbedderReportedIsForwardedAndNotCaptured() {
+        var captured = 0
+        var forwarded: [NSException] = []
+        ErrorCapture.resetForTest(previous: { forwarded.append($0) })
+        ErrorCapture.install { _ in captured += 1 }
+
+        ErrorCapture.recordReportedDeath(now: 100)
+        let fatal = exception("RCTFatalException: Unhandled JS Exception: TypeError")
+        ErrorCapture.handle(fatal, now: 100.017)
+
+        XCTAssertEqual(captured, 0, "measured: the native exception came 17 ms after the report")
+        XCTAssertEqual(forwarded.count, 1)
+        XCTAssertTrue(forwarded[0] === fatal, "the chain sees the crash the app actually had")
+    }
+
+    /// An app that kept running after the crash it reported: a crash later on is one of its own.
+    func testTheReportLapses() {
+        var captured = 0
+        ErrorCapture.resetForTest(previous: nil)
+        ErrorCapture.install { _ in captured += 1 }
+
+        ErrorCapture.recordReportedDeath(now: 100)
+        ErrorCapture.handle(exception(), now: 100 + ErrorCapture.sameDeathWindow + 0.001)
+
+        XCTAssertEqual(captured, 1)
+    }
+
     func testAMissingPreviousHandlerIsNotAnError() {
         var captured = 0
         ErrorCapture.resetForTest(previous: nil)
