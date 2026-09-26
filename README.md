@@ -8,7 +8,7 @@ Session recording for iOS, native Swift, no dependencies.
 
 ```swift
 // Swift Package Manager
-.package(url: "https://github.com/LightSession/lightsession-ios.git", from: "0.8.1")
+.package(url: "https://github.com/LightSession/lightsession-ios.git", from: "0.8.2")
 ```
 
 ```ruby
