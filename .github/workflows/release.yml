@@ -54,10 +54,6 @@ jobs:
 
           [ "$IN" = "$POD" ] || { echo "::error::voce pediu $IN e o podspec declara $POD" && exit 1; }
 
-          if git rev-parse -q --verify "refs/tags/$IN" >/dev/null; then
-            echo "::error::a tag $IN ja existe — esta versao ja foi publicada?" && exit 1
-          fi
-
           # O trunk expoe as versoes publicadas do pod. Se a versao pedida ja estiver la, o
           # `pod trunk push` recusaria no fim, depois do lint inteiro.
           if curl -sf "https://trunk.cocoapods.org/api/v1/pods/LightSession" \
@@ -71,6 +67,20 @@ jobs:
             echo "a versao $IN ainda nao esta no trunk"
           else
             echo "::error::LightSession $IN ja esta publicado no CocoaPods trunk" && exit 1
+          fi
+
+          # Uma tag existente so passa num caso: a de uma publicacao que parou no meio. A tag vem
+          # antes do trunk (veja "Marcar a tag"), entao uma falha no trunk deixa a tag e o Release
+          # criados e o pod de fora — e sem isto nao havia como terminar, nem re-rodando nem
+          # disparando de novo. Passa se aponta para este mesmo commit e o trunk ainda nao tem a
+          # versao, conferido logo acima. Uma tag em outro commit continua recusada: move-la
+          # quebraria quem ja resolveu por ela.
+          if git rev-parse -q --verify "refs/tags/$IN" >/dev/null; then
+            if [ "$(git rev-parse "$IN^{commit}")" = "$(git rev-parse HEAD)" ]; then
+              echo "::warning::a tag $IN ja existe neste commit e o trunk nao tem a versao; retomando a publicacao"
+            else
+              echo "::error::a tag $IN ja existe e aponta para outro commit — esta versao ja foi publicada?" && exit 1
+            fi
           fi
 
           echo "version=$IN" >> "$GITHUB_OUTPUT"
@@ -130,6 +140,12 @@ jobs:
         env:
           V: ${{ needs.verificar.outputs.version }}
         run: |
+          # Ja existente neste commit so numa publicacao retomada — a guarda acima recusou todo
+          # outro caso.
+          if git rev-parse -q --verify "refs/tags/$V" >/dev/null; then
+            echo "a tag $V ja existe neste commit; mantida"
+            exit 0
+          fi
           git config user.name  'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git tag -a "$V" -m "$V"
@@ -139,7 +155,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           V: ${{ needs.verificar.outputs.version }}
-        run: gh release create "$V" --title "$V" --generate-notes --verify-tag
+        run: |
+          if gh release view "$V" >/dev/null 2>&1; then
+            echo "o Release $V ja existe; mantido"
+          else
+            gh release create "$V" --title "$V" --generate-notes --verify-tag
+          fi
 
       # O segredo passou a ser obrigatorio. Enquanto este repositorio era privado o passo era
       # pulado quando o token faltava, porque o lint do trunk clona o `s.source` e o clone de um
@@ -157,4 +178,30 @@ jobs:
           if [ -z "$COCOAPODS_TRUNK_TOKEN" ]; then
             echo "::error::COCOAPODS_TRUNK_TOKEN ausente no environment release" && exit 1
           fi
-          pod trunk push LightSession.podspec --allow-warnings
+          # O trunk nao diz so a verdade quando falha. Na 0.8.0 ele respondeu "An internal server
+          # error occurred" e registrou a versao mesmo assim: a API passou a lista-la minutos depois,
+          # e o job ficou vermelho numa publicacao que tinha dado certo. Entao a resposta do push nao
+          # e a ultima palavra — a lista de versoes do trunk e. Conferida antes, porque uma execucao
+          # retomada pode chegar com o pod ja la, e depois de uma falha, por ate cinco minutos.
+          publicado() {
+            curl -sf "https://trunk.cocoapods.org/api/v1/pods/LightSession" | python3 -c "
+          import json, sys
+          sys.exit(0 if '$V' in [v['name'] for v in json.load(sys.stdin).get('versions', [])] else 1)
+          "
+          }
+          if publicado; then
+            echo "LightSession $V ja esta no trunk"
+            exit 0
+          fi
+          if pod trunk push LightSession.podspec --allow-warnings; then
+            exit 0
+          fi
+          for tentativa in $(seq 1 30); do
+            sleep 10
+            if publicado; then
+              echo "::warning::o trunk respondeu com erro mas registrou LightSession $V"
+              exit 0
+            fi
+          done
+          echo "::error::LightSession $V nao chegou ao trunk; a tag e o Release ficaram — dispare de novo para retomar"
+          exit 1
