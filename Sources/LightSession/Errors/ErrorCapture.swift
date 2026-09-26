@@ -15,6 +15,8 @@ import Foundation
 ///    or the capture path raising into itself — falls straight through to the previous handler
 ///    rather than re-entering. Apple documents nothing about this handler's threading or
 ///    reentrancy, which is a reason for the latch, not against it.
+///  * A death an embedder already reported as the crash it is — see `recordReportedDeath` — is not
+///    captured again, and still goes down the chain.
 ///
 /// ## What this does not catch, stated rather than implied
 ///
@@ -46,6 +48,34 @@ enum ErrorCapture {
     /// The handler that was installed before this one, wrapped so a test can stand one in.
     private static var previous: ((NSException) -> Void)?
 
+    /// When an embedder last reported a crash, on the uptime clock. See `recordReportedDeath`.
+    private static var reportedDeathAt: TimeInterval?
+
+    /// How long after an embedder's crash a native crash is taken to be the same death.
+    static let sameDeathWindow: TimeInterval = 10
+
+    /// An embedder's crash has just been written, and it stands for the process death that follows.
+    ///
+    /// A runtime that lives inside the process ends it over a fatal error the only way it can, with a
+    /// native exception: React Native raises `RCTFatalException` over a JavaScript error nothing caught.
+    /// By then the embedder has already reported the error in its own terms — a `TypeError`, with the
+    /// JavaScript frames — so the native exception is the same crash a second time, under a name that
+    /// carries the message and so makes a group of every message. Measured on the React Native example:
+    /// each crash arrived twice, the `RCTFatalException` 17 ms after the `TypeError`. So a native crash
+    /// within `sameDeathWindow` of the report is not captured again; it still reaches the previous
+    /// handler, untouched.
+    ///
+    /// Bounded in time because the embedder speaks for what its runtime is about to do, and an app can
+    /// make that wrong: one that installed its own fatal handler to keep running survives the error it
+    /// reported as a crash, and a native crash long after that is a crash of its own. Ten seconds is
+    /// hundreds of times the gap measured and still expires long before anything else is likely to go
+    /// wrong.
+    static func recordReportedDeath(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        lock.lock()
+        defer { lock.unlock() }
+        reportedDeathAt = now
+    }
+
     /// Starts capturing. Idempotent; the second caller updates the capture and changes nothing else.
     static func install(capture: @escaping (NSException) -> Void) {
         lock.lock()
@@ -73,16 +103,20 @@ enum ErrorCapture {
     /// The handler body, separate from the registration so the invariants are testable — they only
     /// ever run while the process is dying, which is the worst possible place to discover them
     /// wrong.
-    static func handle(_ exception: NSException) {
-        let first: Bool = {
+    static func handle(_ exception: NSException, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        let captures: Bool = {
             lock.lock()
             defer { lock.unlock() }
             if crashed { return false }
             crashed = true
+            // The death an embedder already reported; see `recordReportedDeath`.
+            if let reported = reportedDeathAt, (0...sameDeathWindow).contains(now - reported) {
+                return false
+            }
             return true
         }()
 
-        if first {
+        if captures {
             capture?(exception)
         }
         // The original exception, not anything of ours: the runtime's crash log and every reporter
@@ -97,5 +131,6 @@ enum ErrorCapture {
         crashed = false
         capture = nil
         previous = stub
+        reportedDeathAt = nil
     }
 }

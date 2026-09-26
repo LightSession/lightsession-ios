@@ -56,6 +56,7 @@ public final class LightSessionBridge: NSObject {
                 "interactionCaptureIntervalMillis", defaults.interactionCaptureIntervalMillis
             ),
             sessionTimeoutMillis: config.millis("sessionTimeoutMillis", defaults.sessionTimeoutMillis),
+            captureErrors: config.bool("captureErrors", defaults.captureErrors),
             captureNetwork: config.bool("captureNetwork", defaults.captureNetwork),
             networkSampleRate: config.rate("networkSampleRate", defaults.networkSampleRate)
         )

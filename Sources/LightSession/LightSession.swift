@@ -420,6 +420,10 @@ public enum LightSession {
     ///   - handled: whether the app survived, which the dashboard shows as the difference between an
     ///     error and a crash. An error that escaped the app's handlers without ending the process is
     ///     handled, and [mechanism] says what it escaped through — `manual` for one the app reported.
+    ///     `false` says the runtime is ending the process over this error, and it is written the way a
+    ///     crash is: to disk, on the calling thread, before this returns. It stands for that death,
+    ///     too — the native exception the runtime ends the process with, a moment later, is not
+    ///     recorded a second time.
     ///   - symbols: the build whose symbols name the frames, when they are addresses.
     ///
     /// Obeys `LightSessionConfig.captureErrors`. Callable from any thread.
@@ -438,7 +442,7 @@ public enum LightSession {
             return
         }
         guard capturesErrors else { return }
-        recorder.record(error: ErrorDetails(
+        let details = ErrorDetails(
             handled: handled,
             threadName: thread,
             threadId: nil,
@@ -447,7 +451,20 @@ public enum LightSession {
             timestampMillis: Int64(Date().timeIntervalSince1970 * 1000),
             mechanism: mechanism,
             symbols: symbols
-        ))
+        )
+        guard !handled else {
+            recorder.record(error: details)
+            return
+        }
+        // A crash, reported because the runtime is about to end the process: React Native raises
+        // `RCTFatalException` over a JavaScript error nothing caught as soon as its handler returns. The
+        // ordinary path hops to the main thread first, and a hop queued behind a dying process is one
+        // that may never run — so it is written here, on this thread, the way the crash handler writes
+        // one. Then, and only then, it stands for the death: a native crash racing the write is recorded
+        // rather than skipped, because two records of one death is a count off by one, and none is a
+        // crash lost.
+        recorder.record(fatal: details)
+        ErrorCapture.recordReportedDeath()
     }
 
     /// What to cover on a screen the SDK cannot read, from the toolkit that painted it.
