@@ -142,48 +142,40 @@ public enum LightSession {
         self.drain = drain
 
         if config.enableReplay {
-            do {
-                let recorder = FrameRecorder(
-                    spool: spool,
-                    drain: drain,
-                    session: session,
-                    appVersion: appVersion,
-                    cadence: CaptureCadence(
-                        idleMillis: config.captureIntervalMillis,
-                        burstMillis: config.interactionCaptureIntervalMillis
-                    ),
-                    maskPolicy: policy
-                )
-                replay = recorder
-                recorder.start()
-            } catch {
-                LightSessionLog.error("replay not recorded: \(error.localizedDescription)")
-            }
+            let recorder = FrameRecorder(
+                spool: spool,
+                drain: drain,
+                session: session,
+                appVersion: appVersion,
+                cadence: CaptureCadence(
+                    idleMillis: config.captureIntervalMillis,
+                    burstMillis: config.interactionCaptureIntervalMillis
+                ),
+                maskPolicy: policy
+            )
+            replay = recorder
+            recorder.start()
         }
 
         if config.trackInteractions {
-            do {
-                let recorder = InteractionRecorder(
-                    spool: spool,
-                    drain: drain,
-                    session: session,
-                    appVersion: appVersion,
-                    deviceInfo: deviceInfo(),
-                    appInfo: appInfo(),
-                    currentScreen: { [weak tracker] in tracker?.currentScreenForInteraction },
-                    // A touch does two things, and both are wired here rather than each part watching
-                    // touches for itself: it opens the replay's fast interval, and it cancels the screenshot
-                    // the current screen was waiting out its quiet period for.
-                    onTouch: {
-                        replay?.touched()
-                        tracker.screenTouched()
-                    }
-                )
-                interactions = recorder
-                recorder.start()
-            } catch {
-                LightSessionLog.error("interactions not recorded: \(error.localizedDescription)")
-            }
+            let recorder = InteractionRecorder(
+                spool: spool,
+                drain: drain,
+                session: session,
+                appVersion: appVersion,
+                deviceInfo: deviceInfo(),
+                appInfo: appInfo(),
+                currentScreen: { [weak tracker] in tracker?.currentScreenForInteraction },
+                // A touch does two things, and both are wired here rather than each part watching
+                // touches for itself: it opens the replay's fast interval, and it cancels the screenshot
+                // the current screen was waiting out its quiet period for.
+                onTouch: {
+                    replay?.touched()
+                    tracker.screenTouched()
+                }
+            )
+            interactions = recorder
+            recorder.start()
         }
 
         // Uncaught-exception capture, wired to the interaction recorder because an error is a
